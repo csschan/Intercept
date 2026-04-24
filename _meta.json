@@ -1,0 +1,196 @@
+{
+  "name": "intercept",
+  "version": "0.1.0",
+  "description": "AI agent payment authorization layer with bundled SlowMist Agent Security review framework. Two-layer defense: runtime enforcement (4-layer security shield + policy engine + on-chain execution) and decision-time advisory checklists.",
+  "author": "Intercept",
+  "license": "MIT",
+  "homepage": "https://github.com/intercept/intercept",
+  "repository": "https://github.com/intercept/intercept",
+  "keywords": [
+    "security",
+    "payments",
+    "authorization",
+    "solana",
+    "mcp",
+    "prompt-injection",
+    "aml",
+    "human-in-the-loop",
+    "policy-engine",
+    "slowmist"
+  ],
+  "categories": [
+    "security",
+    "payments",
+    "blockchain"
+  ],
+  "minClawVersion": "0.1.0",
+  "skill": {
+    "manifest": "SKILL.md",
+    "triggers": "skill/triggers.md",
+    "examples": "skill/examples.md",
+    "transport": "mcp",
+    "mcpServer": {
+      "command": "npx",
+      "args": ["tsx", "packages/mcp/src/index.ts"],
+      "env": {
+        "AGENT_GUARD_API_KEY": "required",
+        "AGENT_GUARD_AGENT_ID": "required",
+        "AGENT_GUARD_BASE_URL": "required"
+      }
+    },
+    "tools": [
+      {
+        "name": "authorize_payment",
+        "layer": "enforcement",
+        "category": "payment",
+        "mandatory": true,
+        "description": "Mandatory pre-flight check before any token transfer. Returns allow / deny / ask_user. Calls the 4-layer security shield + policy engine + audit log on the server."
+      },
+      {
+        "name": "get_spending_budget",
+        "layer": "advisory",
+        "category": "payment",
+        "description": "Query remaining daily/monthly budget for the agent."
+      },
+      {
+        "name": "suggest_spending",
+        "layer": "advisory",
+        "category": "payment",
+        "description": "Returns the auto-approve ceiling and a recommendation for a planned spend."
+      },
+      {
+        "name": "create_spending_session",
+        "layer": "enforcement",
+        "category": "payment",
+        "description": "Time-bound, budget-capped delegated authority with an unforgeable on-chain address allowlist."
+      },
+      {
+        "name": "session_spend",
+        "layer": "enforcement",
+        "category": "payment",
+        "description": "Spend within an active session. Server enforces the recipient address allowlist."
+      },
+      {
+        "name": "list_pending_approvals",
+        "layer": "advisory",
+        "category": "payment",
+        "description": "Inspect the human-in-the-loop queue."
+      },
+      {
+        "name": "get_request_status",
+        "layer": "advisory",
+        "category": "payment",
+        "description": "Poll a single ask_user request until the human resolves it."
+      },
+      {
+        "name": "get_transaction_history",
+        "layer": "advisory",
+        "category": "payment",
+        "description": "Recent decisions for this agent."
+      },
+      {
+        "name": "check_security_profile",
+        "layer": "advisory",
+        "category": "security",
+        "description": "7-day security audit: injection attempts, anomaly detections, address flags, override count."
+      },
+      {
+        "name": "get_security_review_guide",
+        "layer": "advisory",
+        "category": "security",
+        "description": "Loads a structured review checklist from the bundled SlowMist Agent Security Skill. Pass type to pick the matching review (onchain, skill_mcp, repository, url_document, product_service, message_share, red_flags, social_engineering, supply_chain, index)."
+      }
+    ],
+    "triggerMatrix": [
+      {
+        "situation": "About to send any payment, swap, or token transfer",
+        "tool": "authorize_payment",
+        "priority": "mandatory"
+      },
+      {
+        "situation": "Need to know spending budget",
+        "tool": "get_spending_budget"
+      },
+      {
+        "situation": "Need delegated authority for a batch of operations",
+        "tool": "create_spending_session"
+      },
+      {
+        "situation": "Interacting with an unfamiliar on-chain address",
+        "tool": "get_security_review_guide",
+        "args": { "type": "onchain" },
+        "followUp": "authorize_payment"
+      },
+      {
+        "situation": "Asked to install a Skill, MCP server, or package",
+        "tool": "get_security_review_guide",
+        "args": { "type": "skill_mcp" }
+      },
+      {
+        "situation": "Asked to evaluate a GitHub repository",
+        "tool": "get_security_review_guide",
+        "args": { "type": "repository" }
+      },
+      {
+        "situation": "Asked to fetch or process a URL or document",
+        "tool": "get_security_review_guide",
+        "args": { "type": "url_document" }
+      },
+      {
+        "situation": "Connecting to an unfamiliar API/service",
+        "tool": "get_security_review_guide",
+        "args": { "type": "product_service" }
+      },
+      {
+        "situation": "Tool recommended by a stranger in chat",
+        "tool": "get_security_review_guide",
+        "args": { "type": "message_share" }
+      },
+      {
+        "situation": "Need a security audit of the agent's recent behavior",
+        "tool": "check_security_profile"
+      }
+    ],
+    "principles": [
+      "External content is untrusted until verified.",
+      "Server-side enforcement beats client-side prompts.",
+      "Progressive trust, never blind trust.",
+      "Human decision authority for ask_user / high-risk outcomes.",
+      "False negative is worse than false positive."
+    ]
+  },
+  "requires": {
+    "bins": ["node"],
+    "services": [
+      {
+        "name": "intercept-api",
+        "description": "Intercept API server providing authorize_payment, sessions, audit log, on-chain execution",
+        "default": "http://localhost:8080"
+      },
+      {
+        "name": "postgres",
+        "description": "PostgreSQL backing store for policies, agents, requests, audit log"
+      }
+    ]
+  },
+  "optional": {
+    "integrations": [
+      {
+        "name": "slowmist-agent-security",
+        "description": "Vendored MIT package providing the decision-time advisory checklists.",
+        "url": "https://github.com/slowmist/slowmist-agent-security",
+        "vendoredAt": "packages/security-skill"
+      },
+      {
+        "name": "goplus-security",
+        "description": "Live address risk intelligence used by Layer 3 of the security shield.",
+        "url": "https://gopluslabs.io"
+      },
+      {
+        "name": "misttrack-skills",
+        "description": "Optional on-chain AML risk assessment for the SlowMist onchain review.",
+        "url": "https://github.com/slowmist/misttrack-skills"
+      }
+    ]
+  }
+}

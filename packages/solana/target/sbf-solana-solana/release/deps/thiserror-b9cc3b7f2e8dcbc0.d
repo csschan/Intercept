@@ -1,0 +1,14 @@
+/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/deps/libthiserror-b9cc3b7f2e8dcbc0.rmeta: /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/lib.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/aserror.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/display.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/var.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/private.rs /Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/thiserror-7be6abcdf8003f1d/out/private.rs
+
+/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/deps/libthiserror-b9cc3b7f2e8dcbc0.rlib: /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/lib.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/aserror.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/display.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/var.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/private.rs /Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/thiserror-7be6abcdf8003f1d/out/private.rs
+
+/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/deps/thiserror-b9cc3b7f2e8dcbc0.d: /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/lib.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/aserror.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/display.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/var.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/private.rs /Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/thiserror-7be6abcdf8003f1d/out/private.rs
+
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/lib.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/aserror.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/display.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/var.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/thiserror-2.0.18/src/private.rs:
+/Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/thiserror-7be6abcdf8003f1d/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/build/thiserror-7be6abcdf8003f1d/out

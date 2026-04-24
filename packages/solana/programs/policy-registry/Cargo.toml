@@ -1,0 +1,22 @@
+[package]
+name = "policy-registry"
+version = "0.1.0"
+description = "Agent Guard on-chain policy registry"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "policy_registry"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+
+[dependencies]
+anchor-lang = "0.31.1"
+# Pin to avoid toml_datetime v1.1.0+spec-1.1.0 which requires edition2024
+# (incompatible with Solana SBF toolchain Rust 1.75)
+proc-macro-crate = "=3.2.0"

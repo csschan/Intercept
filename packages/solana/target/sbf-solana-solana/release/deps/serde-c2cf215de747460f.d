@@ -1,0 +1,14 @@
+/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/deps/libserde-c2cf215de747460f.rmeta: /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/serde-9ea6e4adfabc402f/out/private.rs
+
+/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/deps/libserde-c2cf215de747460f.rlib: /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/serde-9ea6e4adfabc402f/out/private.rs
+
+/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/deps/serde-c2cf215de747460f.d: /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs /Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs /Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/serde-9ea6e4adfabc402f/out/private.rs
+
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/lib.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/integer128.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/mod.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/de.rs:
+/Users/css/.cargo/registry/src/index.crates.io-6f17d22bba15001f/serde-1.0.228/src/private/ser.rs:
+/Users/css/Desktop/Agent\ Guard\ /packages/solana/target/sbf-solana-solana/release/build/serde-9ea6e4adfabc402f/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/css/Desktop/Agent Guard /packages/solana/target/sbf-solana-solana/release/build/serde-9ea6e4adfabc402f/out

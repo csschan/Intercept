@@ -1,0 +1,42 @@
+{
+  "name": "@agent-guard/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx src/scripts/seed.ts"
+  },
+  "dependencies": {
+    "@agent-guard/solana": "*",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@fastify/cors": "^10.0.2",
+    "@fastify/rate-limit": "^10.2.1",
+    "@solana/spl-token": "^0.4.9",
+    "@solana/web3.js": "^1.98.0",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.41.0",
+    "fastify": "^5.3.2",
+    "ioredis": "^5.4.2",
+    "nanoid": "^5.1.5",
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^6.33.0",
+    "postgres": "^3.4.5",
+    "resend": "^4.5.1",
+    "viem": "^2.23.10",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/node-telegram-bot-api": "^0.64.0",
+    "drizzle-kit": "^0.30.4",
+    "pino-pretty": "^13.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}
