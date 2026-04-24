@@ -1,39 +1,41 @@
-# Agent Guard
+# Intercept
 
-AI Agent 的链上支出授权层。在任何交易执行前，返回 `allow / deny / ask_user`。
+The security middleware for x402 agentic payments. Returns `allow / deny / ask_user` before any on-chain transaction executes.
 
-## 项目结构
+## Project Structure
 
 ```
-agent-guard/
+intercept/
 ├── apps/
-│   ├── api/          # Fastify 后端 API
-│   └── web/          # Next.js 前端 Dashboard
+│   ├── api/          # Fastify backend API
+│   └── web/          # Next.js frontend Dashboard
 ├── packages/
-│   ├── sdk/          # @agent-guard/sdk 客户端
-│   └── solana/       # Anchor 链上程序 (on-chain policy registry)
+│   ├── mcp/          # MCP server integration
+│   ├── sdk/          # @agent-guard/sdk client
+│   ├── security-skill/ # Claude Code security skill
+│   └── solana/       # Anchor on-chain program (policy registry)
 ```
 
-## 快速开始
+## Getting Started
 
-### 1. 环境变量
+### 1. Environment Variables
 
 ```bash
 cp apps/api/.env.example apps/api/.env
-# 填入 DATABASE_URL, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN 等
+# Fill in DATABASE_URL, ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, etc.
 ```
 
-### 2. 数据库
+### 2. Database
 
 ```bash
-# 启动本地 PostgreSQL
+# Start local PostgreSQL
 docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=password -e POSTGRES_DB=agent_guard postgres:16
 
-# 运行迁移
+# Run migrations
 cd apps/api && npm run db:migrate
 ```
 
-### 3. 启动开发服务器
+### 3. Start Development Servers
 
 ```bash
 # API (port 8080)
@@ -43,9 +45,9 @@ npm run dev:api
 npm run dev:web
 ```
 
-## API 快速参考
+## API Reference
 
-### 核心：授权交易
+### Core: Authorize Transaction
 
 ```bash
 POST /v1/authorize
@@ -67,28 +69,28 @@ POST /v1/authorize
 { "decision": "allow" | "deny" | "ask_user", "requestId": "req_xxx", "reason": "..." }
 ```
 
-### 自然语言配置规则
+### Natural Language Policy Configuration
 
 ```bash
 POST /v1/policies/parse
-{ "text": "低于5美元自动通过，新商家先问我，每月最多100美元" }
+{ "text": "Auto-approve under $5, ask me for new merchants, max $100 per month" }
 ```
 
-### 人工审批
+### Human Approval
 
 ```bash
 POST /v1/requests/:id/resolve
 { "action": "approve" | "deny" }
 ```
 
-## SDK 使用
+## SDK Usage
 
 ```typescript
 import { AgentGuard } from '@agent-guard/sdk'
 
 const guard = new AgentGuard({ agentId: '...', apiKey: '...' })
 
-// 在交易前调用
+// Call before any transaction
 const result = await guard.authorize({
   chain: 'solana',
   to: 'RecipientPublicKey',
@@ -98,20 +100,21 @@ const result = await guard.authorize({
 })
 
 if (result.decision === 'allow') {
-  // 执行 Solana 交易
+  // Execute Solana transaction
 }
 if (result.decision === 'ask_user') {
-  // 等待用户在 Telegram/Email 审批
+  // Wait for user approval via Telegram/Email
   const final = await guard.waitForApproval(result.requestId)
 }
 ```
 
-## 支持的链
+## Supported Chains
 
-| Chain | 状态 |
+| Chain | Status |
 |---|---|
-| Solana (mainnet/devnet) | ✅ 完整支持 |
-| Ethereum | ✅ EVM 接口 |
-| Base | ✅ EVM 接口 |
-| Polygon | ✅ EVM 接口 |
-| Arbitrum | ✅ EVM 接口 |
+| Solana (mainnet/devnet) | Full support |
+| Ethereum | EVM interface |
+| Base | EVM interface |
+| Polygon | EVM interface |
+| Arbitrum | EVM interface |
+| Arc Testnet | Testnet support |

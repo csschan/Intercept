@@ -1,5 +1,5 @@
 {
-  "name": "agent-guard",
+  "name": "intercept",
   "version": "0.1.0",
   "private": true,
   "workspaces": [
