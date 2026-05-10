@@ -386,7 +386,7 @@ export async function monitorRoutes(app: FastifyInstance) {
     const failedTxs = transactions.filter(t => t.isError).length
 
     // ── Deep Analysis (26 dimensions) ───────────────────────────────
-    const goplusChainId = { ethereum: '1', bsc: '56', polygon: '137', arbitrum: '42161', base: '8453', optimism: '10' }[chain] ?? ''
+    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453', optimism: '10' }[chain] ?? ''
 
     // Collect all agent wallets for graph analysis
     const allWalletsResult = await db.execute(sql.raw(
@@ -836,6 +836,109 @@ export async function monitorRoutes(app: FastifyInstance) {
     })
   })
 
+  // GET /v1/monitor/intercept-activity — real-time intercept stats for security dashboard
+  app.get('/v1/monitor/intercept-activity', async (_request, reply) => {
+    try {
+      // Recent intercept events (last 50 decisions)
+      const recentEvents = await db.execute(sql.raw(
+        `SELECT id, agent_id, chain, to_address, amount_usdc, token, decision, reason, rule_triggered,
+                security_context, created_at
+         FROM auth_requests
+         ORDER BY created_at DESC LIMIT 50`
+      ))
+
+      // Today's stats
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+      const statsResult = await db.execute(sql.raw(
+        `SELECT
+           COUNT(*) as total,
+           COUNT(*) FILTER (WHERE decision = 'allow') as allowed,
+           COUNT(*) FILTER (WHERE decision = 'deny') as denied,
+           COUNT(*) FILTER (WHERE decision = 'ask_user') as ask_user,
+           COALESCE(SUM(CASE WHEN decision = 'allow' THEN CAST(amount_usdc AS NUMERIC) ELSE 0 END), 0) as total_volume
+         FROM auth_requests
+         WHERE created_at >= '${todayStart.toISOString()}'`
+      ))
+      const todayStats = (statsResult as any[])[0] ?? {}
+
+      // Attack type breakdown (from denied/ask_user)
+      const attackTypes = await db.execute(sql.raw(
+        `SELECT rule_triggered, COUNT(*) as count
+         FROM auth_requests
+         WHERE decision IN ('deny', 'ask_user') AND rule_triggered IS NOT NULL
+         GROUP BY rule_triggered
+         ORDER BY count DESC LIMIT 10`
+      ))
+
+      // All-time stats
+      const allTimeResult = await db.execute(sql.raw(
+        `SELECT
+           COUNT(*) as total,
+           COUNT(*) FILTER (WHERE decision = 'deny') as denied,
+           COUNT(*) FILTER (WHERE decision = 'ask_user') as escalated,
+           COALESCE(SUM(CASE WHEN decision = 'allow' THEN CAST(amount_usdc AS NUMERIC) ELSE 0 END), 0) as total_volume
+         FROM auth_requests`
+      ))
+      const allTime = (allTimeResult as any[])[0] ?? {}
+
+      // Payment flow — recent allowed payments (for visualization)
+      const paymentFlow = await db.execute(sql.raw(
+        `SELECT ar.agent_id, ar.to_address, ar.amount_usdc, ar.token, ar.chain, ar.created_at,
+                a.name as agent_name
+         FROM auth_requests ar
+         LEFT JOIN agents a ON a.id = ar.agent_id
+         WHERE ar.decision = 'allow' AND ar.amount_usdc IS NOT NULL
+         ORDER BY ar.created_at DESC LIMIT 30`
+      ))
+
+      return reply.send({
+        recentEvents: (recentEvents as any[]).map(e => ({
+          id: e.id,
+          agentId: e.agent_id,
+          chain: e.chain,
+          to: e.to_address,
+          amount: Number(e.amount_usdc ?? 0),
+          token: e.token,
+          decision: e.decision,
+          reason: e.reason,
+          ruleTriggered: e.rule_triggered,
+          time: e.created_at,
+        })),
+        today: {
+          total: Number(todayStats.total ?? 0),
+          allowed: Number(todayStats.allowed ?? 0),
+          denied: Number(todayStats.denied ?? 0),
+          askUser: Number(todayStats.ask_user ?? 0),
+          volume: Number(todayStats.total_volume ?? 0),
+          interceptRate: Number(todayStats.total) > 0
+            ? Math.round(((Number(todayStats.denied) + Number(todayStats.ask_user)) / Number(todayStats.total)) * 100)
+            : 0,
+        },
+        allTime: {
+          total: Number(allTime.total ?? 0),
+          denied: Number(allTime.denied ?? 0),
+          escalated: Number(allTime.escalated ?? 0),
+          volume: Number(allTime.total_volume ?? 0),
+        },
+        attackTypes: (attackTypes as any[]).map(a => ({
+          type: a.rule_triggered,
+          count: Number(a.count),
+        })),
+        paymentFlow: (paymentFlow as any[]).map(p => ({
+          agentId: p.agent_id,
+          agentName: p.agent_name,
+          to: p.to_address,
+          amount: Number(p.amount_usdc ?? 0),
+          token: p.token,
+          chain: p.chain,
+          time: p.created_at,
+        })),
+      })
+    } catch (err) {
+      return reply.status(500).send({ error: 'Failed to load intercept activity' })
+    }
+  })
+
   // Auto-scan on first boot if DB is empty
   const existing = await db.execute(sql.raw('SELECT COUNT(*) as cnt FROM erc8004_agents'))
   if (Number((existing as any[])[0]?.cnt ?? 0) === 0) {
@@ -875,7 +978,7 @@ async function getOwnerAnalysis(chain: string, agentId: string) {
     const ownedAgents = (agentListResult as any[]).map(r => ({ agentId: r.agent_id, chain: r.chain, chainLabel: r.chain_label }))
 
     // Check owner address risk via GoPlus
-    const goplusChainId = { ethereum: '1', bsc: '56', polygon: '137', arbitrum: '42161', base: '8453', optimism: '10' }[chain]
+    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453', optimism: '10' }[chain]
     let ownerRisk: { score: number; flags: string[] } = { score: 0, flags: [] }
     if (goplusChainId) {
       try {

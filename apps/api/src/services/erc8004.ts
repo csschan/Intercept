@@ -6,7 +6,7 @@
  */
 
 import { createPublicClient, http, parseAbiItem, type PublicClient, type Chain } from 'viem'
-import { mainnet, bsc, arbitrum, optimism, base, polygon } from 'viem/chains'
+import { mainnet, bsc, arbitrum, optimism, base } from 'viem/chains'
 
 // ── Contract Addresses (same across all chains) ────────────────────────────────
 
@@ -46,12 +46,6 @@ export const SUPPORTED_CHAINS: Record<string, { chain: Chain; rpcUrl: string; la
     label: 'Optimism',
     color: '#FF0420',
   },
-  polygon: {
-    chain: polygon,
-    rpcUrl: process.env.POLYGON_RPC_URL ?? 'https://polygon-bor-rpc.publicnode.com',
-    label: 'Polygon',
-    color: '#8247E5',
-  },
 }
 
 // How many recent blocks to scan per chain (approx 2 weeks).
@@ -62,7 +56,6 @@ const SCAN_RANGE: Record<string, bigint> = {
   arbitrum: 5_000_000n,  // ~14 days @ 0.25s/block
   base: 600_000n,        // ~14 days @ 2s/block
   optimism: 600_000n,    // ~14 days @ 2s/block
-  polygon: 300_000n,     // ~14 days @ 2s/block
 }
 
 // ── ABI Fragments ──────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { getAgentTransactions, enrichAgent, SUPPORTED_CHAINS } from './erc8004.j
 import { indexAgentCapabilities } from './capability-indexer.js'
 import { runSlowMistAnalysis } from './slowmist-analyzer.js'
 import { profileAgent } from './agent-profiler.js'
+import { getSolanaAgents } from './solana-agent-registry.js'
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,37 @@ async function analyzeAgent(agentId: string, chain: string, wallet: string): Pro
   }
 }
 
+// ── Solana Agent Discovery ────────────────────────────────────────────────────
+// Fetches Solana agents from the on-chain registry and persists them to DB
+// so the auto-analyzer can find and analyze them.
+
+let solanaDiscoveryDone = false
+
+async function discoverSolanaAgents() {
+  if (solanaDiscoveryDone) return
+  try {
+    const solAgents = await getSolanaAgents(500)
+    if (solAgents.length === 0) return
+
+    let inserted = 0
+    for (const a of solAgents) {
+      if (!a.wallet) continue // skip agents without wallets — can't analyze
+      try {
+        await db.execute(sql.raw(
+          `INSERT INTO erc8004_agents (agent_id, owner, chain, chain_label, block_number, tx_hash, wallet)
+           VALUES ('${a.agentId}', '${a.owner}', 'solana', 'Solana', '${a.createdAt}', '${a.assetId}', '${a.wallet}')
+           ON CONFLICT (chain, agent_id) DO NOTHING`
+        ))
+        inserted++
+      } catch {}
+    }
+    console.log(`[auto-analyzer] Solana discovery: ${inserted}/${solAgents.length} agents persisted to DB`)
+    solanaDiscoveryDone = true
+  } catch (err) {
+    console.error('[auto-analyzer] Solana discovery failed:', err)
+  }
+}
+
 // ── Run one round ──────────────────────────────────────────────────────────────
 
 async function runRound() {
@@ -114,6 +146,9 @@ async function runRound() {
   let analyzed = 0
 
   try {
+    // Discover Solana agents on first round (persists to DB for future analysis)
+    await discoverSolanaAgents()
+
     // Priority 1: Agents with wallet but never scored
     let rows = await db.execute(sql.raw(
       `SELECT agent_id, chain, wallet FROM erc8004_agents

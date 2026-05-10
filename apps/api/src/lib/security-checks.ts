@@ -61,6 +61,14 @@ export interface SecurityCheckResult {
   counterpartyRisk: 'safe' | 'suspicious' | 'malicious'
   counterpartyFlags: string[]
 
+  // Layer 6: Unified deep checks (patterns, phishing, social engineering)
+  phishingDetected: boolean
+  phishingUrl?: string
+  redFlagMatches: string[]
+  socialEngineeringMatches: string[]
+  calldataRisk: string[]
+  approvalRisks: { spender: string; token: string; isUnlimited: boolean }[]
+
   // Summary
   overallRiskLevel: InjectionRisk
 }
@@ -195,7 +203,7 @@ function detectPromptInjection(
   metadata: NormalizedTransaction['metadata'],
   toAddress: string,
 ): { score: number; signals: string[] } {
-  const textToScan = [
+  const rawText = [
     metadata.purpose,
     metadata.notes,
     metadata.merchant,
@@ -204,10 +212,32 @@ function detectPromptInjection(
     .filter(Boolean)
     .join(' ')
 
-  if (!textToScan.trim()) return { score: 0, signals: [] }
+  if (!rawText.trim()) return { score: 0, signals: [] }
+
+  // Normalize Unicode (NFKC) to defeat homograph attacks (е→e, ⅰ→i, etc.)
+  let textToScan = rawText.normalize('NFKC')
+
+  // Attempt to decode any base64 fragments embedded in the text
+  const base64Re = /(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/g
+  const b64Matches = rawText.match(base64Re) ?? []
+  for (const b64 of b64Matches) {
+    try {
+      const decoded = Buffer.from(b64, 'base64').toString('utf-8')
+      // Only append if the decoded text looks like readable ASCII (not binary)
+      if (/^[\x20-\x7E\s]{4,}$/.test(decoded)) {
+        textToScan += ' ' + decoded
+      }
+    } catch {}
+  }
 
   let score = 0
   const signals: string[] = []
+
+  // Flag base64 encoding as suspicious if decoded content was appended
+  if (b64Matches.length > 0 && textToScan.length > rawText.length + 10) {
+    score += 15
+    signals.push('base64_encoded_content')
+  }
 
   for (const rule of INJECTION_RULES) {
     if (rule.patterns.some(p => p.test(textToScan))) {
@@ -320,7 +350,6 @@ const GOPLUS_CHAIN_ID: Record<string, string> = {
   'solana-devnet': '',       // skip — testnet has no real blacklist
   ethereum: '1',
   base: '8453',
-  polygon: '137',
   arbitrum: '42161',
   'arc-testnet': '',         // Arc testnet — skip (GoPlus doesn't index Arc yet)
 }
@@ -329,6 +358,12 @@ async function checkAddressBlacklist(
   address: string,
   chain: string,
 ): Promise<{ risk: AddressRisk; flags: string[] }> {
+  const isSolana = chain === 'solana' || chain === 'solana-devnet'
+
+  if (isSolana) {
+    return checkSolanaAddressSecurity(address)
+  }
+
   const chainId = GOPLUS_CHAIN_ID[chain]
   if (!chainId) return { risk: 'safe', flags: [] }
 
@@ -369,9 +404,64 @@ async function checkAddressBlacklist(
 
     return { risk, flags }
   } catch {
-    // GoPlus failure never blocks payment
     return { risk: 'safe', flags: [] }
   }
+}
+
+// Solana address security via Solscan account labels + basic heuristics
+async function checkSolanaAddressSecurity(
+  address: string,
+): Promise<{ risk: AddressRisk; flags: string[] }> {
+  const flags: string[] = []
+
+  try {
+    // Solscan Pro API: check account label (scammer/hacker/phishing tags)
+    const res = await fetch(
+      `https://pro-api.solscan.io/v2.0/account/${address}`,
+      {
+        signal: AbortSignal.timeout(3000),
+        headers: { 'accept': 'application/json' },
+      },
+    )
+    if (res.ok) {
+      const data = await res.json() as any
+      const label = (data?.data?.account_label ?? '').toLowerCase()
+      const tags = (data?.data?.tags ?? []).map((t: string) => t.toLowerCase())
+
+      // Check for known bad labels
+      const badLabels = ['scammer', 'hacker', 'phishing', 'exploit', 'drainer', 'blacklisted', 'sanctioned']
+      for (const bad of badLabels) {
+        if (label.includes(bad) || tags.some((t: string) => t.includes(bad))) {
+          flags.push(`solscan_${bad}`)
+        }
+      }
+    }
+  } catch {
+    // Solscan unavailable — continue with other checks
+  }
+
+  // Basic heuristic: extremely new or system program addresses are fine
+  const SOLANA_SYSTEM_PROGRAMS = new Set([
+    '11111111111111111111111111111111',
+    'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJe1bDM',
+    'ComputeBudget111111111111111111111111111111',
+    'So11111111111111111111111111111111111111112',
+  ])
+
+  if (SOLANA_SYSTEM_PROGRAMS.has(address)) {
+    return { risk: 'safe', flags: [] }
+  }
+
+  const risk: AddressRisk = flags.some(f =>
+    f.includes('scammer') || f.includes('phishing') || f.includes('sanctioned') || f.includes('drainer')
+  )
+    ? 'malicious'
+    : flags.length > 0
+      ? 'suspicious'
+      : 'safe'
+
+  return { risk, flags }
 }
 
 // ── Layer 4: Statistical Behavioral Anomaly Detection ─────────────────────────
@@ -395,8 +485,33 @@ async function analyzeBehaviorAnomaly(
     limit: 200,
   })
 
-  // Need at least 5 transactions to establish a baseline
-  if (history.length < 5) return { score: 0, flags: [], riskLevel: 'normal' }
+  // New agent strict mode: no baseline yet, apply conservative defaults
+  if (history.length < 5) {
+    const flags: string[] = ['new_agent']
+    let score = 0
+
+    // First transaction for this agent — extra scrutiny
+    if (history.length === 0) {
+      flags.push('first_transaction')
+      score += 15
+    }
+
+    // High-value first transactions escalate to human
+    if (tx.amountUsdc > 10) {
+      score += 30
+      flags.push('new_agent_high_value')
+    }
+
+    // Unknown recipient for new agent
+    const knownRecipients = new Set(history.map(r => r.toAddress))
+    if (!knownRecipients.has(tx.toAddress)) {
+      score += 10
+      flags.push('new_agent_unknown_recipient')
+    }
+
+    const riskLevel: AnomalyRiskLevel = score >= 40 ? 'high' : score >= 20 ? 'elevated' : 'normal'
+    return { score, flags, riskLevel }
+  }
 
   // Build baseline
   const amounts = history
@@ -415,8 +530,8 @@ async function analyzeBehaviorAnomaly(
   const seenChains = new Set(history.map(r => r.chain as string))
 
   const recentRequests = history.filter(r => r.createdAt >= sixtySecondsAgo)
-  // Demo agents run 12 steps in quick succession — use a higher burst threshold
-  const isDemoAgent = agentId === '03c7f8ae-efaf-47ba-8048-1000c76029c7'
+  // Agents with many recent requests (e.g. demo or batch jobs) need higher burst thresholds
+  const isDemoAgent = history.length > 30 && history.filter(r => r.createdAt >= sixtySecondsAgo).length > 5
   const sameNewMerchantRecent = history.filter(r => {
     const meta = r.txMetadata as Record<string, unknown> | null
     return (
@@ -540,7 +655,7 @@ async function checkContractSecurity(
       { signal: AbortSignal.timeout(3000) },
     )
     if (!res.ok) return { risk: 'safe', flags: [] }
-    const data = await res.json()
+    const data = await res.json() as any
     const r = data.result ?? {}
     const flags: string[] = []
 
@@ -573,7 +688,7 @@ async function checkTokenSecurity(
       { signal: AbortSignal.timeout(3000) },
     )
     if (!res.ok) return { risk: 'safe', flags: [] }
-    const data = await res.json()
+    const data = await res.json() as any
     const flags: string[] = []
 
     for (const [, info] of Object.entries(data.result ?? {})) {
@@ -596,6 +711,275 @@ async function checkTokenSecurity(
   }
 }
 
+// ── Solana SPL Token Security via Rugcheck.xyz ──────────────────────────────
+
+// Well-known Solana tokens that legitimately have mint/freeze authority
+const SOLANA_KNOWN_TOKENS = new Set([
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+  'So11111111111111111111111111111111111111112',     // Wrapped SOL
+  'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So',  // mSOL
+  'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn', // JitoSOL
+  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', // BONK
+  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',   // JUP
+  'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof',   // RNDR
+])
+
+async function checkSolanaTokenSecurity(
+  mintAddress: string,
+): Promise<{ risk: 'safe' | 'honeypot' | 'suspicious'; flags: string[]; score?: number; details?: string }> {
+  // Skip check for well-known tokens
+  if (SOLANA_KNOWN_TOKENS.has(mintAddress)) {
+    return { risk: 'safe', flags: [], score: 100 }
+  }
+
+  try {
+    const res = await fetch(
+      `https://api.rugcheck.xyz/v1/tokens/${mintAddress}/report`,
+      { signal: AbortSignal.timeout(5000) },
+    )
+    if (!res.ok) return { risk: 'suspicious', flags: ['unknown_token'], details: 'Token not found in Rugcheck database' }
+    const data = await res.json() as any
+    const flags: string[] = []
+
+    // Check rugged status
+    if (data.rugged) flags.push('rugged')
+
+    // Check authorities
+    if (data.mintAuthority) flags.push('mint_authority_enabled')
+    if (data.freezeAuthority) flags.push('freeze_authority_enabled')
+
+    // Check transfer fee
+    if (data.transferFee && data.transferFee.pct > 0) flags.push('transfer_fee')
+
+    // Parse risk entries from Rugcheck
+    const risks = data.risks ?? []
+    for (const r of risks) {
+      const level = r.level ?? ''
+      const name = (r.name ?? '').toLowerCase()
+      if (level === 'danger' || level === 'error') {
+        flags.push(`danger:${name}`)
+      } else if (level === 'warn') {
+        flags.push(`warn:${name}`)
+      }
+    }
+
+    // Top holder concentration — if top 1 holds >50%, suspicious
+    const topHolders = data.topHolders ?? []
+    if (topHolders.length > 0) {
+      const topPct = Number(topHolders[0]?.pct ?? 0)
+      if (topPct > 50) flags.push('top_holder_>50%')
+      else if (topPct > 30) flags.push('top_holder_>30%')
+    }
+
+    // Low liquidity
+    const liquidity = Number(data.totalMarketLiquidity ?? 0)
+    if (liquidity > 0 && liquidity < 1000) flags.push('low_liquidity')
+
+    // Insider networks
+    if (data.graphInsidersDetected) flags.push('insider_network_detected')
+
+    // Score mapping: Rugcheck score is 0-1000 (higher = safer)
+    const score = Number(data.score_normalised ?? data.score ?? 0)
+
+    // Risk classification
+    const hasDanger = flags.some(f => f.startsWith('danger:'))
+    const risk = data.rugged || hasDanger || flags.includes('insider_network_detected')
+      ? 'honeypot' as const
+      : flags.includes('mint_authority_enabled') || flags.includes('freeze_authority_enabled') || flags.includes('top_holder_>50%') || flags.includes('low_liquidity')
+        ? 'suspicious' as const
+        : 'safe' as const
+
+    const details = risks.map((r: any) => `[${r.level}] ${r.name}: ${r.description ?? ''}`).join('; ')
+
+    return { risk, flags, score, details }
+  } catch {
+    return { risk: 'suspicious', flags: ['rugcheck_error'], details: 'Failed to query Rugcheck API' }
+  }
+}
+
+// ── Layer 6: Unified Deep Checks (Patterns, Phishing, Calldata) ─────────────
+// Imports from deep-analyzer and skill-reviewer, runs lightweight checks
+// that are fast enough for the authorize hot path.
+
+// ── Inline pattern matchers (mirrored from deep-analyzer for sync access) ───
+
+const RED_FLAG_KEYWORDS = [
+  // Code execution
+  'eval(', 'exec(', 'child_process', 'subprocess', 'os.system',
+  'Runtime.exec', '__import__', 'importlib', 'compile(',
+  'powershell', 'cmd /c', 'cmd.exe', '/bin/sh', '/bin/bash',
+  // Environment / secrets
+  'process.env', 'os.environ', '.env', 'credentials',
+  'private_key', 'secret_key', 'api_key', 'mnemonic', 'seed_phrase',
+  'keystore', 'wallet.dat',
+  // Shell injection
+  'curl | sh', 'wget | bash', 'curl | bash',
+  'chmod 777', 'chmod +x', 'sudo', 'crontab', 'rm -rf',
+  // Browser / XSS
+  'document.cookie', 'localStorage', 'sessionStorage',
+  'innerHTML', 'outerHTML', '<script', 'javascript:',
+  'onerror=', 'onload=', 'onfocus=',
+  // SQL injection
+  'DROP TABLE', 'DELETE FROM', 'UNION SELECT', "' OR '1'='1",
+  '1=1', '--', '; DROP',
+  // Encoding / obfuscation
+  'base64', 'obfuscated', 'atob(', 'btoa(',
+  'String.fromCharCode', 'charCodeAt',
+  // Crypto-specific
+  'transferOwnership', 'renounceOwnership', 'selfdestruct',
+  'delegatecall', 'SSTORE', 'CREATE2',
+]
+
+function _matchRedFlags(text: string): string[] {
+  const lower = text.toLowerCase()
+  return RED_FLAG_KEYWORDS.filter(k => lower.includes(k))
+}
+
+const SOCIAL_ENGINEERING_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+  // Urgency & pressure
+  { label: 'urgency', pattern: /act now|limited time|hurry|urgent|don't miss|expires? (soon|today|in \d)|last chance/i },
+  { label: 'fear', pattern: /account.*(suspend|block|lock|compromis)|unauthorized.*access|security.*breach/i },
+  // Unrealistic promises
+  { label: 'unrealistic_promise', pattern: /guaranteed|100% safe|risk.?free|no risk|double your|10x|100x|1000x/i },
+  { label: 'guaranteed_apy', pattern: /guaranteed.*apy|fixed.*return|daily.*(return|profit|yield)/i },
+  // Credential / key harvesting
+  { label: 'credential_harvest', pattern: /send.*private.?key|share.*seed|enter.*mnemonic|export.*keystore|paste.*secret/i },
+  { label: 'wallet_connect_phish', pattern: /connect.*wallet.*to.*claim|verify.*wallet.*to.*receive|sync.*wallet/i },
+  // Airdrop / giveaway bait
+  { label: 'airdrop_bait', pattern: /airdrop.*claim|free.*token|bonus.*reward|claim.*reward|giveaway/i },
+  { label: 'whitelist_bait', pattern: /whitelist.*spot|exclusive.*access|pre.?sale|kol.*round|early.*access.*mint/i },
+  // Impersonation
+  { label: 'impersonation', pattern: /official.*support|admin.*team|verify.*account|customer.*service.*agent/i },
+  { label: 'brand_impersonation', pattern: /from.*(?:phantom|solflare|jupiter|raydium|coinbase|binance).*team/i },
+  // Authority manipulation
+  { label: 'authority_claim', pattern: /compliance.*required|regulatory.*action|legal.*obligation|tax.*authority/i },
+  // Drainer patterns
+  { label: 'drainer_language', pattern: /approve.*all|unlimited.*approval|max.*approval|set.*approval.*for.*all/i },
+  { label: 'rush_signing', pattern: /sign.*quickly|approve.*before|confirm.*immediately|don't.*review/i },
+]
+
+function _matchSocialEngineering(text: string): string[] {
+  return SOCIAL_ENGINEERING_PATTERNS
+    .filter(p => p.pattern.test(text))
+    .map(p => p.label)
+}
+
+const PHISHING_DOMAIN_PATTERNS = [
+  // Crypto + bait keyword combos
+  /\b(claim|airdrop|reward|bonus|free|giveaway|mint)\b.*\b(sol|solana|usdc|crypto|defi|token|nft|eth)\b/i,
+  /\b(sol|solana|usdc|crypto|defi|token|eth)\b.*\b(claim|airdrop|reward|bonus|free|giveaway|mint)\b/i,
+  // Wallet action phishing
+  /\b(verify|connect|sync|restore|recover|validate|update)\b.*\b(wallet|seed|phrase|key|account)\b/i,
+  // Brand impersonation domains
+  /(solana|phantom|solflare|jupiter|raydium|metamask|coinbase|binance|uniswap|opensea)-?(rewards?|claim|airdrop|official|support|verify|update)\./i,
+  // Suspicious TLDs with crypto keywords
+  /\.(xyz|top|click|buzz|link|tk|ml|ga|cf)\b.*\b(sol|swap|stake|yield|farm|pool|bridge)/i,
+  // Drainer kit patterns
+  /(drainer|sweeper|claimer|approver)\./i,
+]
+
+function _isPhishingUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase()
+    return PHISHING_DOMAIN_PATTERNS.some(p => p.test(hostname) || p.test(url))
+  } catch {
+    return false
+  }
+}
+
+async function checkPhishing(resourceUrl?: string): Promise<{ detected: boolean; url?: string }> {
+  if (!resourceUrl) return { detected: false }
+
+  // Local heuristic — catches obviously suspicious domains without GoPlus round-trip
+  if (_isPhishingUrl(resourceUrl)) {
+    return { detected: true, url: resourceUrl }
+  }
+
+  try {
+    const { checkPhishingSite } = await import('../services/deep-analyzer.js')
+    const isPhishing = await checkPhishingSite(resourceUrl)
+    return { detected: isPhishing, url: isPhishing ? resourceUrl : undefined }
+  } catch {
+    return { detected: false }
+  }
+}
+
+function runPatternMatching(metadata: NormalizedTransaction['metadata']): {
+  redFlags: string[]
+  socialEngineering: string[]
+} {
+  const textToScan = [
+    metadata.purpose,
+    metadata.notes,
+    metadata.merchant,
+    metadata.category,
+  ].filter(Boolean).join(' ')
+
+  if (!textToScan.trim()) return { redFlags: [], socialEngineering: [] }
+
+  try {
+    // Sync pattern matching — these are pure regex functions, imported at module level
+    return {
+      redFlags: _matchRedFlags(textToScan),
+      socialEngineering: _matchSocialEngineering(textToScan),
+    }
+  } catch {
+    return { redFlags: [], socialEngineering: [] }
+  }
+}
+
+// Known ERC-20/721 method selectors for inline calldata decoding
+const RISKY_SELECTORS: Record<string, { method: string; risk: string }> = {
+  '0x095ea7b3': { method: 'approve', risk: 'approval_call:approve' },
+  '0xa22cb465': { method: 'setApprovalForAll', risk: 'approval_call:setApprovalForAll' },
+  '0x42842e0e': { method: 'safeTransferFrom', risk: 'transfer_call' },
+  '0x23b872dd': { method: 'transferFrom', risk: 'transfer_from_call' },
+}
+const UNLIMITED_AMOUNT = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+
+async function checkCalldataAndApprovals(
+  tx: NormalizedTransaction,
+): Promise<{ calldataRisk: string[]; approvalRisks: { spender: string; token: string; isUnlimited: boolean }[] }> {
+  const calldataRisk: string[] = []
+  const approvalRisks: { spender: string; token: string; isUnlimited: boolean }[] = []
+
+  try {
+    // Inline calldata decode — fast, no external dependency
+    if (tx.data && tx.data !== '0x' && tx.data !== '' && tx.data.length >= 10) {
+      const selector = tx.data.slice(0, 10).toLowerCase()
+      const known = RISKY_SELECTORS[selector]
+      if (known) {
+        calldataRisk.push(known.risk)
+        // Check for unlimited approval amount
+        if (known.method === 'approve' && tx.data.toLowerCase().includes(UNLIMITED_AMOUNT)) {
+          calldataRisk.push('unlimited_approval_in_calldata')
+        }
+        if (known.method === 'setApprovalForAll') {
+          // setApprovalForAll(operator, true) grants full collection access
+          calldataRisk.push('full_collection_access')
+        }
+      }
+    }
+
+    // Check existing approvals for the destination contract via GoPlus
+    const chainId = GOPLUS_CHAIN_ID[tx.chain]
+    if (chainId && tx.toAddress) {
+      const { checkApprovalSecurity } = await import('../services/deep-analyzer.js')
+      const approvals = await checkApprovalSecurity(chainId, tx.toAddress)
+      for (const a of approvals) {
+        if (a.isUnlimited) {
+          approvalRisks.push({ spender: a.spender, token: a.token, isUnlimited: true })
+        }
+      }
+    }
+  } catch {
+    // Best-effort
+  }
+
+  return { calldataRisk, approvalRisks }
+}
+
 // ── Main Entry Point ──────────────────────────────────────────────────────────
 
 export async function runSecurityChecks(
@@ -612,8 +996,11 @@ export async function runSecurityChecks(
   const rulesResult = detectPromptInjection(tx.metadata, tx.toAddress)
   const needsLLMCheck = rulesResult.score >= 10 || metadataTextLength > 100 || !!tx.metadata.isNewMerchant
 
+  // Extract resource URL from metadata for phishing check
+  const resourceUrl = tx.metadata.purpose?.match(/https?:\/\/[^\s]+/)?.[0] ?? undefined
+
   // Run all checks concurrently — none depend on each other
-  const [llmResult, addressResult, behaviorResult, sessionResult, contractResult, tokenResult] = await Promise.all([
+  const [llmResult, addressResult, behaviorResult, sessionResult, contractResult, tokenResult, phishingResult, calldataResult] = await Promise.all([
     needsLLMCheck
       ? analyzeLLMSemantic(tx.metadata, tx.toAddress, tx.amountUsdc)
       : Promise.resolve(null),
@@ -624,10 +1011,22 @@ export async function runSecurityChecks(
     tx.data && tx.data !== '0x' && tx.data !== ''
       ? checkContractSecurity(tx.toAddress, tx.chain)
       : Promise.resolve({ risk: 'safe' as const, flags: [] as string[] }),
-    tx.contractAddress
-      ? checkTokenSecurity(tx.contractAddress, tx.chain)
-      : Promise.resolve({ risk: 'safe' as const, flags: [] as string[] }),
+    // Solana: use tokenAddress or contractAddress for Rugcheck
+    // EVM: use contractAddress for GoPlus token_security
+    (() => {
+      const solanaChains = ['solana', 'solana-devnet']
+      const mint = tx.tokenAddress ?? tx.contractAddress
+      if (solanaChains.includes(tx.chain) && mint) return checkSolanaTokenSecurity(mint)
+      if (tx.contractAddress) return checkTokenSecurity(tx.contractAddress, tx.chain)
+      return Promise.resolve({ risk: 'safe' as const, flags: [] as string[] })
+    })(),
+    // Layer 6: Phishing + Calldata/Approvals
+    checkPhishing(resourceUrl),
+    checkCalldataAndApprovals(tx),
   ])
+
+  // Layer 6: Pattern matching (sync, runs inline)
+  const patternResult = runPatternMatching(tx.metadata)
 
   // Merge Layer 1 + Layer 2: LLM can upgrade the injection score but not downgrade it
   let injectionScore = rulesResult.score
@@ -659,6 +1058,15 @@ export async function runSecurityChecks(
     tokenResult.risk === 'honeypot' ? 100 :
     tokenResult.risk === 'suspicious' ? 50 : 0
 
+  // Layer 6 scores
+  const phishingScore = phishingResult.detected ? 100 : 0
+  const patternScore = Math.min(
+    (patternResult.redFlags.length * 30) + (patternResult.socialEngineering.length * 25),
+    100,
+  )
+  const calldataScore = calldataResult.calldataRisk.includes('unlimited_approval_in_calldata') ? 70 :
+    calldataResult.calldataRisk.length > 0 ? 40 : 0
+
   const maxScore = Math.max(
     injectionScore,
     addressScore,
@@ -666,6 +1074,9 @@ export async function runSecurityChecks(
     sessionResult.score,
     contractScore,
     tokenScore,
+    phishingScore,
+    patternScore,
+    calldataScore,
   )
 
   return {
@@ -686,6 +1097,13 @@ export async function runSecurityChecks(
     tokenFlags: tokenResult.flags,
     counterpartyRisk: addressResult.risk as any, // reuse address check
     counterpartyFlags: addressResult.flags,
+    // Layer 6
+    phishingDetected: phishingResult.detected,
+    phishingUrl: phishingResult.url,
+    redFlagMatches: patternResult.redFlags,
+    socialEngineeringMatches: patternResult.socialEngineering,
+    calldataRisk: calldataResult.calldataRisk,
+    approvalRisks: calldataResult.approvalRisks,
     overallRiskLevel: scoreToRisk(maxScore),
   }
 }
@@ -739,6 +1157,36 @@ export function applySecurityOverride(
     }
   }
 
+  // Layer 6: Phishing URL = hard deny
+  if (security.phishingDetected) {
+    return {
+      shouldOverride: true,
+      newDecision: 'deny',
+      reason: `Phishing site detected: ${security.phishingUrl}`,
+      ruleTriggered: 'phishing_detected',
+    }
+  }
+
+  // Layer 6: Red flags in metadata = hard deny
+  if (security.redFlagMatches.length >= 2) {
+    return {
+      shouldOverride: true,
+      newDecision: 'deny',
+      reason: `Multiple red flags detected in transaction: ${security.redFlagMatches.join(', ')}`,
+      ruleTriggered: 'red_flags_multiple',
+    }
+  }
+
+  // Layer 6: Unlimited approval in calldata = hard deny
+  if (security.calldataRisk.includes('unlimited_approval_in_calldata')) {
+    return {
+      shouldOverride: true,
+      newDecision: 'deny',
+      reason: `Transaction contains unlimited token approval — high risk of fund drainage`,
+      ruleTriggered: 'unlimited_approval',
+    }
+  }
+
   // ── Escalations (only upgrade allow → ask_user) ───────────────────────────
 
   if (currentDecision !== 'allow') return null
@@ -778,6 +1226,46 @@ export function applySecurityOverride(
       newDecision: 'ask_user',
       reason: `Token security concerns: ${security.tokenFlags.join(', ')}`,
       ruleTriggered: 'token_suspicious',
+    }
+  }
+
+  // Layer 6: Single red flag = escalate
+  if (security.redFlagMatches.length === 1) {
+    return {
+      shouldOverride: true,
+      newDecision: 'ask_user',
+      reason: `Red flag detected: ${security.redFlagMatches[0]}`,
+      ruleTriggered: 'red_flag_single',
+    }
+  }
+
+  // Layer 6: Social engineering patterns = escalate
+  if (security.socialEngineeringMatches.length > 0) {
+    return {
+      shouldOverride: true,
+      newDecision: 'ask_user',
+      reason: `Social engineering pattern detected: ${security.socialEngineeringMatches.join(', ')}`,
+      ruleTriggered: 'social_engineering_detected',
+    }
+  }
+
+  // Layer 6: Approval calls in calldata = escalate
+  if (security.calldataRisk.length > 0) {
+    return {
+      shouldOverride: true,
+      newDecision: 'ask_user',
+      reason: `Transaction contains approval operation: ${security.calldataRisk.join(', ')}`,
+      ruleTriggered: 'approval_in_calldata',
+    }
+  }
+
+  // Layer 6: Existing unlimited approvals on target = escalate
+  if (security.approvalRisks.length > 0) {
+    return {
+      shouldOverride: true,
+      newDecision: 'ask_user',
+      reason: `Target contract has ${security.approvalRisks.length} unlimited approval(s) — verify before interacting`,
+      ruleTriggered: 'target_has_unlimited_approvals',
     }
   }
 

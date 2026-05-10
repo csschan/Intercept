@@ -47,7 +47,7 @@ const TransactionSchema = z.object({
 
 const AuthorizeBodySchema = z.object({
   agentId: z.string().uuid(),
-  chain: z.enum(['solana', 'solana-devnet', 'ethereum', 'base', 'polygon', 'arbitrum', 'arc-testnet']),
+  chain: z.enum(['solana', 'solana-devnet', 'ethereum', 'base', 'arbitrum', 'arc-testnet']),
   transaction: TransactionSchema,
 })
 
@@ -126,6 +126,10 @@ export async function authorizeRoutes(app: FastifyInstance) {
           },
           chain,
         )
+        // Pass tokenAddress for Solana SPL token security checks (Rugcheck)
+        if (transaction.tokenAddress) {
+          normalized.tokenAddress = transaction.tokenAddress
+        }
       } else {
         normalized = parseEVMTransaction({
           from: transaction.from,
@@ -352,6 +356,19 @@ export async function authorizeRoutes(app: FastifyInstance) {
           expiresAt: expiresAt!.toISOString(),
           approvalUrl: `${process.env.APP_URL ?? 'http://localhost:3000'}/approve/${requestId}`,
           timeoutAction: rules.timeoutAction,
+          securityChecks: {
+            injectionRisk: security.injectionRisk,
+            addressRisk: security.addressRisk,
+            contractRisk: security.contractRisk,
+            tokenRisk: security.tokenRisk,
+            counterpartyRisk: security.counterpartyRisk,
+            phishingDetected: security.phishingDetected,
+            redFlagMatches: security.redFlagMatches,
+            socialEngineeringMatches: security.socialEngineeringMatches,
+            calldataRisk: security.calldataRisk,
+            anomalyRiskLevel: security.anomalyRiskLevel,
+            overallRiskLevel: security.overallRiskLevel,
+          },
         }
         return reply.status(202).send(response)
       }
@@ -361,6 +378,19 @@ export async function authorizeRoutes(app: FastifyInstance) {
         requestId,
         reason: finalDecision.reason,
         ruleTriggered: finalDecision.ruleTriggered,
+        securityChecks: {
+          injectionRisk: security.injectionRisk,
+          addressRisk: security.addressRisk,
+          contractRisk: security.contractRisk,
+          tokenRisk: security.tokenRisk,
+          counterpartyRisk: security.counterpartyRisk,
+          phishingDetected: security.phishingDetected,
+          redFlagMatches: security.redFlagMatches,
+          socialEngineeringMatches: security.socialEngineeringMatches,
+          calldataRisk: security.calldataRisk,
+          anomalyRiskLevel: security.anomalyRiskLevel,
+          overallRiskLevel: security.overallRiskLevel,
+        },
       }
       return reply.status(200).send(response)
     },

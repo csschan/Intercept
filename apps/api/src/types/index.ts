@@ -5,7 +5,6 @@ export type Chain =
   | 'solana-devnet'
   | 'ethereum'
   | 'base'
-  | 'polygon'
   | 'arbitrum'
   | 'arc-testnet'
 
@@ -95,6 +94,20 @@ export interface AuthorizeResponse {
   expiresAt?: string
   approvalUrl?: string
   timeoutAction?: 'allow' | 'deny'
+  // Security analysis breakdown — always included
+  securityChecks?: {
+    injectionRisk: string
+    addressRisk: string
+    contractRisk: string
+    tokenRisk: string
+    counterpartyRisk: string
+    phishingDetected: boolean
+    redFlagMatches: string[]
+    socialEngineeringMatches: string[]
+    calldataRisk: string[]
+    anomalyRiskLevel: string
+    overallRiskLevel: string
+  }
 }
 
 // ── NLP Parsing ───────────────────────────────────────────────────────────────
