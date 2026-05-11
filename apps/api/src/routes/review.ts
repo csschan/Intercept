@@ -13,7 +13,11 @@
 import type { FastifyInstance } from 'fastify'
 import { reviewSkillMcp, reviewRepository, reviewUrl, reviewProduct, reviewMessage } from '../services/skill-reviewer.js'
 import { readFileSync } from 'fs'
-import { join } from 'path'
+import { fileURLToPath } from 'url'
+import { dirname, resolve } from 'path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const SKILL_ROOT = resolve(__dirname, '..', '..', '..', '..', 'packages', 'security-skill')
 
 export async function reviewRoutes(app: FastifyInstance) {
 
@@ -82,7 +86,7 @@ export async function reviewRoutes(app: FastifyInstance) {
       if (!path) return reply.status(400).send({ error: 'Invalid type', available: Object.keys(paths) })
 
       try {
-        const content = readFileSync(join(process.cwd(), '..', 'packages', 'security-skill', path), 'utf-8')
+        const content = readFileSync(resolve(SKILL_ROOT, path), 'utf-8')
         return reply.send({ type, path, content, length: content.length })
       } catch {
         return reply.status(404).send({ error: 'Checklist not found' })

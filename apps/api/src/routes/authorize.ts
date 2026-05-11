@@ -17,6 +17,7 @@ import { parseEVMTransaction } from '../adapters/evm.js'
 import { sendApprovalRequest } from '../services/notify.js'
 import { executeSolanaTransfer } from '../services/solana-transfer.js'
 import { executeArcTransfer } from '../services/arc-transfer.js'
+import { executeEVMTransfer } from '../services/evm-transfer.js'
 import type { NormalizedTransaction, PolicyRules, AuthorizeResponse } from '../types/index.js'
 
 // ── Validation Schema ──────────────────────────────────────────────────────────
@@ -500,6 +501,12 @@ export async function authorizeRoutes(app: FastifyInstance) {
           })
         } else if (isSolana) {
           result = await executeSolanaTransfer({
+            toAddress: req.toAddress,
+            amountUsdc: Number(req.amountUsdc ?? 0),
+          })
+        } else if (['ethereum', 'base', 'arbitrum'].includes(req.chain)) {
+          result = await executeEVMTransfer({
+            chain: req.chain,
             toAddress: req.toAddress,
             amountUsdc: Number(req.amountUsdc ?? 0),
           })

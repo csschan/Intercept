@@ -143,6 +143,7 @@ export const spendingSessions = pgTable('spending_sessions', {
   id: text('id').primaryKey(),                          // sess_nanoid
   agentId: uuid('agent_id').notNull().references(() => agents.id),
   ownerId: uuid('owner_id').notNull().references(() => owners.id),
+  sessionKey: text('session_key'),
   maxAmountUsdc: numeric('max_amount_usdc', { precision: 18, scale: 6 }).notNull(),
   spentSoFar: numeric('spent_so_far', { precision: 18, scale: 6 }).notNull().default('0'),
   expiresAt: timestamp('expires_at').notNull(),
@@ -171,6 +172,111 @@ export const sessionSpends = pgTable('session_spends', {
   category: text('category'),
   purpose: text('purpose'),
   onChainSignature: text('on_chain_signature'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+
+// ── ERC-8004 Agent Monitor ───────────────────────────────────────────────────
+
+export const erc8004Agents = pgTable('erc8004_agents', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  agentId: text('agent_id').notNull(),
+  owner: text('owner').notNull(),
+  chain: text('chain').notNull(),
+  chainLabel: text('chain_label').notNull(),
+  blockNumber: text('block_number').notNull(),
+  txHash: text('tx_hash').notNull(),
+  wallet: text('wallet'),
+  uri: text('uri'),
+  name: text('name'),
+  securityScore: numeric('security_score'),
+  txCount: integer('tx_count'),
+  topFlag: text('top_flag'),
+  scoredAt: timestamp('scored_at'),
+  firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
+})
+
+export const erc8004Alerts = pgTable('erc8004_alerts', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  agentId: text('agent_id').notNull(),
+  chain: text('chain').notNull(),
+  alertType: text('alert_type').notNull(),
+  severity: text('severity').notNull().default('warning'),
+  title: text('title').notNull(),
+  detail: text('detail'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+
+export const erc8004Dimensions = pgTable('erc8004_dimensions', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  agentId: text('agent_id').notNull(),
+  chain: text('chain').notNull(),
+  fundSafety: numeric('fund_safety'),
+  logicTransparency: numeric('logic_transparency'),
+  compliance: numeric('compliance'),
+  techStability: numeric('tech_stability'),
+  behaviorConsistency: numeric('behavior_consistency'),
+  rugPullIndex: numeric('rug_pull_index'),
+  gasAnomalyScore: numeric('gas_anomaly_score'),
+  scoredAt: timestamp('scored_at').notNull().defaultNow(),
+})
+
+export const erc8004ScanCursors = pgTable('erc8004_scan_cursors', {
+  chain: text('chain').primaryKey(),
+  lastBlock: text('last_block').notNull(),
+  agentCount: integer('agent_count').notNull().default(0),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+})
+
+// ── Agent Capabilities & Endpoints ──────────────────────────────────────────
+
+export const agentCapabilities = pgTable('agent_capabilities', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  agentId: text('agent_id').notNull(),
+  chain: text('chain').notNull(),
+  capability: text('capability').notNull(),
+  category: text('category'),
+  confidence: numeric('confidence').default('1.0'),
+  source: text('source').default('uri'),
+  lastChecked: timestamp('last_checked'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+
+export const agentEndpoints = pgTable('agent_endpoints', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  agentId: text('agent_id').notNull(),
+  chain: text('chain').notNull(),
+  endpointType: text('endpoint_type').notNull(),
+  url: text('url').notNull(),
+  status: text('status').default('unknown'),
+  toolsCount: integer('tools_count').default(0),
+  toolsList: jsonb('tools_list'),
+  pricing: text('pricing'),
+  lastChecked: timestamp('last_checked'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+
+export const agentWhitelist = pgTable('agent_whitelist', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  ownerId: uuid('owner_id').references(() => owners.id),
+  agentId: text('agent_id').notNull(),
+  chain: text('chain').notNull(),
+  level: text('level').default('trusted'),
+  reason: text('reason'),
+  addedAt: timestamp('added_at').notNull().defaultNow(),
+})
+
+// ── Verification Reports ────────────────────────────────────────────────────
+
+export const verificationReports = pgTable('verification_reports', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  agentId: text('agent_id').notNull(),
+  chain: text('chain').notNull(),
+  verdict: text('verdict').notNull(),
+  verdictReason: text('verdict_reason'),
+  reportHash: text('report_hash'),
+  signature: text('signature'),
+  dimensions: jsonb('dimensions'),
+  onChainStatus: text('on_chain_status').default('pending'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 

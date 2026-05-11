@@ -13,7 +13,11 @@
  */
 
 import { readFileSync } from 'fs'
-import { join } from 'path'
+import { fileURLToPath } from 'url'
+import { dirname, resolve, join } from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __skillDirname = dirname(__filename)
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -34,7 +38,7 @@ export interface ReviewCheck {
 
 // ── Load checklists from packages/security-skill ──────────────────────────────
 
-const SKILL_DIR = join(process.cwd(), '..', 'packages', 'security-skill')
+const SKILL_DIR = resolve(__skillDirname, '..', '..', '..', '..', 'packages', 'security-skill')
 
 function loadChecklist(type: string): string {
   const paths: Record<string, string> = {
