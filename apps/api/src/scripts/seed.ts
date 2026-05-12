@@ -9,6 +9,7 @@
 
 import 'dotenv/config'
 import { db, owners, agents, policies, authRequests, auditLogs, knownMerchants } from '../db/index.js'
+import { hashApiKey } from '../lib/hash.js'
 import { nanoid } from 'nanoid'
 import { eq, or } from 'drizzle-orm'
 
@@ -58,7 +59,8 @@ async function seed() {
     id: FIXED_OWNER_ID,
     email: 'demo@agentguard.io',
     telegramChatId: process.env.TELEGRAM_DEMO_CHAT_ID || null,
-    apiKey: FIXED_API_KEY,
+    apiKey: hashApiKey(FIXED_API_KEY),
+    apiKeyPrefix: FIXED_API_KEY.slice(0, 12) + '...',
   })
   console.log('✅ Owner created')
   console.log(`   ID:      ${FIXED_OWNER_ID}`)

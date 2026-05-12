@@ -76,8 +76,8 @@ export interface SlowMistReport {
 // ── GoPlus API ─────────────────────────────────────────────────────────────────
 
 const GOPLUS_CHAIN_IDS: Record<string, string> = {
-  ethereum: '1', bsc: '56', polygon: '137',
-  arbitrum: '42161', base: '8453', optimism: '10',
+  ethereum: '1', bsc: '56',
+  arbitrum: '42161', base: '8453',
   solana: 'solana',
 }
 

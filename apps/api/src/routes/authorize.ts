@@ -9,9 +9,10 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
-import { db, agents, policies, authRequests, auditLogs, knownMerchants, owners } from '../db/index.js'
+import { db, agents, policies, authRequests, auditLogs, knownMerchants, owners, spendingSessions } from '../db/index.js'
 import { evaluatePolicy } from '../lib/policy-engine.js'
 import { runSecurityChecks, applySecurityOverride } from '../lib/security-checks.js'
+import { hashApiKey, hashSessionKey } from '../lib/hash.js'
 import { parseSolanaTransaction } from '../adapters/solana.js'
 import { parseEVMTransaction } from '../adapters/evm.js'
 import { sendApprovalRequest } from '../services/notify.js'
@@ -63,20 +64,27 @@ export async function authorizeRoutes(app: FastifyInstance) {
       const sessionKey = request.headers['x-session-key'] as string | undefined
       const apiKey = request.headers['x-api-key'] as string | undefined
       let sessionContext: { sessionId: string; agentId: string; ownerId: string; x402MaxPerCall?: number } | null = null
+      let authenticatedOwnerId: string | null = null
 
       if (sessionKey) {
-        // Session Key auth — auto-resolves agent + session
-        const sessionRow = await db.execute(
-          sql.raw(`SELECT id, agent_id, owner_id, status, expires_at, x402_max_per_call FROM spending_sessions WHERE session_key = '${sessionKey}' LIMIT 1`)
-        )
-        const sess = (sessionRow as any[])[0]
+        // Session Key auth — auto-resolves agent + session (hashed lookup)
+        const hashedSK = hashSessionKey(sessionKey)
+        const sessionRow = await db
+          .select()
+          .from(spendingSessions)
+          .where(eq(spendingSessions.sessionKey, hashedSK))
+          .limit(1)
+        const sess = sessionRow[0]
         if (!sess) return reply.status(401).send({ error: 'Invalid session key' })
         if (sess.status !== 'active') return reply.status(403).send({ error: 'Session is not active' })
-        if (new Date(sess.expires_at) < new Date()) return reply.status(403).send({ error: 'Session expired' })
-        sessionContext = { sessionId: sess.id, agentId: sess.agent_id, ownerId: sess.owner_id, x402MaxPerCall: Number(sess.x402_max_per_call ?? 1) }
+        if (new Date(sess.expiresAt) < new Date()) return reply.status(403).send({ error: 'Session expired' })
+        sessionContext = { sessionId: sess.id, agentId: sess.agentId, ownerId: sess.ownerId }
+        authenticatedOwnerId = sess.ownerId
       } else if (apiKey) {
-        const keyOwner = await db.query.owners.findFirst({ where: eq(owners.apiKey, apiKey) })
+        const hashedAK = hashApiKey(apiKey)
+        const keyOwner = await db.query.owners.findFirst({ where: eq(owners.apiKey, hashedAK) })
         if (!keyOwner) return reply.status(401).send({ error: 'Invalid API key' })
+        authenticatedOwnerId = keyOwner.id
       } else {
         return reply.status(401).send({ error: 'x-session-key or x-api-key header required' })
       }
@@ -93,9 +101,13 @@ export async function authorizeRoutes(app: FastifyInstance) {
       }
       const { agentId, chain, transaction } = parseResult.data
 
-      // 2. Load agent + policy
+      // 2. Load agent + policy — validate ownership
       const agent = await db.query.agents.findFirst({
-        where: and(eq(agents.id, agentId), eq(agents.status, 'active')),
+        where: and(
+          eq(agents.id, agentId),
+          eq(agents.status, 'active'),
+          eq(agents.ownerId, authenticatedOwnerId!),
+        ),
       })
       if (!agent) return reply.status(404).send({ error: 'Agent not found or inactive' })
 
@@ -276,12 +288,7 @@ export async function authorizeRoutes(app: FastifyInstance) {
         sourceType,
       } as any)
 
-      // Update session call counter
-      if (sessionContext) {
-        await db.execute(sql.raw(
-          `UPDATE spending_sessions SET total_calls = total_calls + 1${finalDecision.decision === 'deny' ? ', total_denied = total_denied + 1' : ''} WHERE id = '${sessionContext.sessionId}'`
-        )).catch(() => {})
-      }
+      // Session call tracking is derived from auth_requests table — no counter needed
 
       // 10. Audit log
       await db.insert(auditLogs).values({

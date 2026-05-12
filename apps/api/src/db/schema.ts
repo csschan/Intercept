@@ -35,7 +35,8 @@ export const owners = pgTable('owners', {
   email: text('email').unique(),
   telegramChatId: text('telegram_chat_id'),
   slackWebhookUrl: text('slack_webhook_url'),
-  apiKey: text('api_key').notNull().unique(),
+  apiKey: text('api_key').notNull().unique(),       // stored as SHA-256 hash
+  apiKeyPrefix: text('api_key_prefix'),              // first 8 chars for display (ag_xxxx...)
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
 
@@ -143,8 +144,9 @@ export const spendingSessions = pgTable('spending_sessions', {
   id: text('id').primaryKey(),                          // sess_nanoid
   agentId: uuid('agent_id').notNull().references(() => agents.id),
   ownerId: uuid('owner_id').notNull().references(() => owners.id),
-  sessionKey: text('session_key'),
+  sessionKey: text('session_key'),                     // stored as SHA-256 hash
   maxAmountUsdc: numeric('max_amount_usdc', { precision: 18, scale: 6 }).notNull(),
+  x402MaxPerCall: numeric('x402_max_per_call', { precision: 18, scale: 6 }),
   spentSoFar: numeric('spent_so_far', { precision: 18, scale: 6 }).notNull().default('0'),
   expiresAt: timestamp('expires_at').notNull(),
   allowedMerchants: text('allowed_merchants').array().default([]),

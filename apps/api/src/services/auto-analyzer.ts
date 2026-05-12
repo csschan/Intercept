@@ -12,6 +12,7 @@ import { indexAgentCapabilities } from './capability-indexer.js'
 import { runSlowMistAnalysis } from './slowmist-analyzer.js'
 import { profileAgent } from './agent-profiler.js'
 import { getSolanaAgents } from './solana-agent-registry.js'
+import { fetchVirtualsAgents } from './virtuals-protocol.js'
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,34 @@ async function discoverSolanaAgents() {
   }
 }
 
+// ── Virtuals Protocol Discovery ───────────────────────────────────────────────
+
+let virtualsDiscoveryDone = false
+
+async function discoverVirtualsAgents() {
+  if (virtualsDiscoveryDone) return
+  try {
+    const agents = await fetchVirtualsAgents()
+    let inserted = 0
+    for (const a of agents) {
+      const wallet = a.tbaAddress || null
+      if (!a.name || a.name === 'Unknown') continue
+      try {
+        await db.execute(sql.raw(
+          `INSERT INTO erc8004_agents (agent_id, owner, chain, chain_label, block_number, tx_hash, wallet, name)
+           VALUES ('v_${a.id}', '${(a.tokenAddress || '').replace(/'/g, "''")}', 'base', 'Base', '0', '', ${wallet ? `'${wallet.replace(/'/g, "''")}'` : 'NULL'}, '${a.name.replace(/'/g, "''")}')
+           ON CONFLICT (chain, agent_id) DO UPDATE SET wallet = EXCLUDED.wallet, name = EXCLUDED.name`
+        ))
+        inserted++
+      } catch {}
+    }
+    console.log(`[auto-analyzer] Virtuals discovery: ${inserted}/${agents.length} agents persisted to DB`)
+    virtualsDiscoveryDone = true
+  } catch (err) {
+    console.error('[auto-analyzer] Virtuals discovery failed:', err)
+  }
+}
+
 // ── Run one round ──────────────────────────────────────────────────────────────
 
 async function runRound() {
@@ -146,8 +175,9 @@ async function runRound() {
   let analyzed = 0
 
   try {
-    // Discover Solana agents on first round (persists to DB for future analysis)
+    // Discover agents from external registries (persists to DB for future analysis)
     await discoverSolanaAgents()
+    await discoverVirtualsAgents()
 
     // Priority 1: Agents with wallet but never scored
     let rows = await db.execute(sql.raw(

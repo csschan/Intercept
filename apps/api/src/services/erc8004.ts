@@ -6,7 +6,7 @@
  */
 
 import { createPublicClient, http, parseAbiItem, type PublicClient, type Chain } from 'viem'
-import { mainnet, bsc, arbitrum, optimism, base } from 'viem/chains'
+import { mainnet, bsc, arbitrum, base } from 'viem/chains'
 
 // ── Contract Addresses (same across all chains) ────────────────────────────────
 
@@ -40,12 +40,6 @@ export const SUPPORTED_CHAINS: Record<string, { chain: Chain; rpcUrl: string; la
     label: 'Base',
     color: '#0052FF',
   },
-  optimism: {
-    chain: optimism,
-    rpcUrl: process.env.OP_RPC_URL ?? 'https://optimism-rpc.publicnode.com',
-    label: 'Optimism',
-    color: '#FF0420',
-  },
 }
 
 // How many recent blocks to scan per chain (approx 2 weeks).
@@ -55,7 +49,6 @@ const SCAN_RANGE: Record<string, bigint> = {
   bsc: 400_000n,         // ~14 days @ 3s/block
   arbitrum: 5_000_000n,  // ~14 days @ 0.25s/block
   base: 600_000n,        // ~14 days @ 2s/block
-  optimism: 600_000n,    // ~14 days @ 2s/block
 }
 
 // ── ABI Fragments ──────────────────────────────────────────────────────────────
@@ -283,8 +276,6 @@ const ETHERSCAN_V2_CHAINS: Record<string, number> = {
 // Blockscout API — free, no key needed
 const BLOCKSCOUT_URLS: Record<string, string> = {
   base: 'https://base.blockscout.com',
-  optimism: 'https://optimism.blockscout.com',
-  polygon: 'https://polygon.blockscout.com',
 }
 
 const ETHERSCAN_API_KEYS = [
@@ -301,7 +292,7 @@ function getApiKey() {
 
 const NATIVE_TOKEN: Record<string, string> = {
   ethereum: 'ETH', bsc: 'BNB', arbitrum: 'ETH',
-  base: 'ETH', optimism: 'ETH', polygon: 'MATIC',
+  base: 'ETH',
 }
 
 /**
@@ -356,7 +347,7 @@ async function getTransactionsViaEtherscan(
 }
 
 /**
- * Get transactions via Blockscout V2 API (Base, Optimism).
+ * Get transactions via Blockscout V2 API (Base).
  */
 async function getTransactionsViaBlockscout(
   baseUrl: string, walletAddress: string, chainKey: string, limit: number,
@@ -489,7 +480,7 @@ export async function getAgentTransactions(
     //   Step 6: Behavioral Patterns    — rapid outbound, funding concentration
     //   Step 7: Risk Scoring           — SlowMist threshold (≤30/31-70/71-90/≥91)
 
-    const goplusChainId = { ethereum: '1', bsc: '56', polygon: '137', arbitrum: '42161', base: '8453', optimism: '10' }[chainKey]
+    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453' }[chainKey]
     const walletLower = walletAddress.toLowerCase()
 
     // Collect unique counterparty addresses and contract addresses

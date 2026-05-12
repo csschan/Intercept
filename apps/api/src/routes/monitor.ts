@@ -22,6 +22,7 @@ import { runSlowMistAnalysis } from '../services/slowmist-analyzer.js'
 import { profileAgent } from '../services/agent-profiler.js'
 import { runDeepAnalysis, type DeepAnalysis } from '../services/deep-analyzer.js'
 import { getSolanaAgents, getSolanaAgentDetail, getSolanaWalletTransactions, getSolanaGlobalStats } from '../services/solana-agent-registry.js'
+import { fetchVirtualsAgents, matchVirtualsAgent } from '../services/virtuals-protocol.js'
 import { db } from '../db/index.js'
 import { sql } from 'drizzle-orm'
 
@@ -63,6 +64,9 @@ export async function monitorRoutes(app: FastifyInstance) {
 
     let query = `SELECT * FROM erc8004_agents`
     const conditions: string[] = []
+
+    // Always exclude removed chains (polygon, optimism)
+    conditions.push(`chain IN ('ethereum','bsc','arbitrum','base')`)
 
     if (chainsParam) {
       const chains = chainsParam.split(',').filter(Boolean).map(c => `'${c}'`).join(',')
@@ -146,6 +150,45 @@ export async function monitorRoutes(app: FastifyInstance) {
       } catch {}
     }
 
+    // Include Virtuals Protocol agents on Base
+    if (!selectedChains || selectedChains.includes('base')) {
+      try {
+        const virtualsAgents = await fetchVirtualsAgents()
+        const virtualsItems = virtualsAgents
+          .filter(v => v.name && v.name !== 'Unknown')
+          .map(v => ({
+            agentId: v.virtualId || String(v.id),
+            owner: v.tokenAddress || '',
+            chain: 'base',
+            chainLabel: 'Base',
+            blockNumber: '0',
+            txHash: '',
+            wallet: v.tbaAddress || null,
+            uri: null,
+            name: v.name,
+            securityScore: null,
+            txCount: 0,
+            topFlag: '',
+            source: 'virtuals',
+            protocol: 'virtuals',
+            protocolName: v.name,
+            protocolSymbol: v.symbol,
+            protocolMcap: v.mcap,
+            protocolImage: v.imageUrl,
+            virtualId: v.virtualId,
+            skills: v.category ? [v.category.toLowerCase()] : [],
+            categories: v.category ? [v.category.toLowerCase()] : [],
+            alertCount: 0,
+            criticalAlerts: 0,
+            warningAlerts: 0,
+          }))
+        const existingOwners = new Set(allAgents.filter(a => a.chain === 'base').map((a: any) => a.owner.toLowerCase()))
+        const newVirtuals = virtualsItems.filter(v => !existingOwners.has(v.owner.toLowerCase()))
+        allAgents = [...allAgents, ...newVirtuals]
+      } catch (err) {
+        console.error('[virtuals] Failed to include Virtuals agents:', err)
+      }
+    }
 
     return reply.send({
       agents: allAgents,
@@ -386,7 +429,7 @@ export async function monitorRoutes(app: FastifyInstance) {
     const failedTxs = transactions.filter(t => t.isError).length
 
     // ── Deep Analysis (26 dimensions) ───────────────────────────────
-    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453', optimism: '10' }[chain] ?? ''
+    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453' }[chain] ?? ''
 
     // Collect all agent wallets for graph analysis
     const allWalletsResult = await db.execute(sql.raw(
@@ -798,15 +841,16 @@ export async function monitorRoutes(app: FastifyInstance) {
 
   // GET /v1/monitor/stats
   app.get('/v1/monitor/stats', async (_request, reply) => {
+    const ACTIVE_CHAINS = ['ethereum', 'bsc', 'arbitrum', 'base']
     const countResult = await db.execute(sql.raw(
-      `SELECT chain, chain_label, COUNT(*) as count FROM erc8004_agents GROUP BY chain, chain_label`
+      `SELECT chain, chain_label, COUNT(*) as count FROM erc8004_agents WHERE chain IN ('${ACTIVE_CHAINS.join("','")}') GROUP BY chain, chain_label`
     ))
     const rows = countResult as any[]
 
     const totalAgents = rows.reduce((s, r) => s + Number(r.count), 0)
 
     const ownerResult = await db.execute(sql.raw(
-      `SELECT COUNT(DISTINCT owner) as unique_owners FROM erc8004_agents`
+      `SELECT COUNT(DISTINCT owner) as unique_owners FROM erc8004_agents WHERE chain IN ('${ACTIVE_CHAINS.join("','")}')`
     ))
     const uniqueOwners = Number((ownerResult as any[])[0]?.unique_owners ?? 0)
 
@@ -978,7 +1022,7 @@ async function getOwnerAnalysis(chain: string, agentId: string) {
     const ownedAgents = (agentListResult as any[]).map(r => ({ agentId: r.agent_id, chain: r.chain, chainLabel: r.chain_label }))
 
     // Check owner address risk via GoPlus
-    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453', optimism: '10' }[chain]
+    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453' }[chain]
     let ownerRisk: { score: number; flags: string[] } = { score: 0, flags: [] }
     if (goplusChainId) {
       try {

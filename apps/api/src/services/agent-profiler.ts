@@ -65,8 +65,8 @@ export interface AgentProfile {
 // ── GoPlus helpers ─────────────────────────────────────────────────────────────
 
 const GOPLUS_CHAINS: Record<string, string> = {
-  ethereum: '1', bsc: '56', polygon: '137',
-  arbitrum: '42161', base: '8453', optimism: '10', solana: 'solana',
+  ethereum: '1', bsc: '56',
+  arbitrum: '42161', base: '8453', solana: 'solana',
 }
 
 async function goplusFetch(url: string): Promise<any> {

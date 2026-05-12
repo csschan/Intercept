@@ -13,6 +13,7 @@ import { z } from 'zod'
 import { eq, and, desc, sql as rawSql } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { db, agents, policies, owners, spendingSessions, sessionSpends } from '../db/index.js'
+import { hashSessionKey } from '../lib/hash.js'
 import { hashPolicy, policyToRules } from '../services/chain.js'
 
 // Lazy-load Solana session client
@@ -91,8 +92,9 @@ export async function sessionRoutes(app: FastifyInstance) {
       status: 'active',
     } as any).returning()
 
-    // Save session key (not in drizzle schema, use raw SQL)
-    await db.execute(rawSql`UPDATE spending_sessions SET session_key = ${sessionKey} WHERE id = ${sessionId}`)
+    // Save hashed session key (original key returned to caller only once)
+    const hashedKey = hashSessionKey(sessionKey)
+    await db.update(spendingSessions).set({ sessionKey: hashedKey }).where(eq(spendingSessions.id, sessionId))
 
     // Sync to chain (fire-and-forget)
     getSessionChainClient().then(async (client) => {

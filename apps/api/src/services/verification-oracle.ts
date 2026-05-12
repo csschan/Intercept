@@ -13,7 +13,7 @@
 import { createHash } from 'crypto'
 import { createWalletClient, createPublicClient, http, parseAbiItem, type Chain } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { mainnet, bsc, arbitrum, base, polygon, optimism } from 'viem/chains'
+import { mainnet, bsc, arbitrum, base } from 'viem/chains'
 import { IDENTITY_REGISTRY, REPUTATION_REGISTRY, SUPPORTED_CHAINS } from './erc8004.js'
 import { runSlowMistAnalysis, type SlowMistReport } from './slowmist-analyzer.js'
 import { profileAgent, type AgentProfile } from './agent-profiler.js'
@@ -66,7 +66,7 @@ export interface VerificationReport {
 // ── Chain config ───────────────────────────────────────────────────────────────
 
 const CHAIN_MAP: Record<string, Chain> = {
-  ethereum: mainnet, bsc, arbitrum, base, polygon, optimism,
+  ethereum: mainnet, bsc, arbitrum, base,
 }
 
 const REPUTATION_ABI = [
@@ -176,7 +176,7 @@ export async function verifyAgent(
   let deepPenalty = 0
   try {
     const { runDeepAnalysis } = await import('./deep-analyzer.js')
-    const goplusChainId = { ethereum: '1', bsc: '56', polygon: '137', arbitrum: '42161', base: '8453', optimism: '10' }[chain] ?? ''
+    const goplusChainId = { ethereum: '1', bsc: '56', arbitrum: '42161', base: '8453' }[chain] ?? ''
     if (wallet && transactions.length > 0) {
       const deep = await runDeepAnalysis(goplusChainId, wallet, transactions, null, {})
       deepPenalty = Math.min(20, deep.totalPenalty)
