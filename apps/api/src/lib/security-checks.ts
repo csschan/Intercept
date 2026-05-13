@@ -24,8 +24,10 @@
 
 import OpenAI from 'openai'
 import { db, authRequests, spendingSessions } from '../db/index.js'
-import { eq, and, gte, desc } from 'drizzle-orm'
+import { eq, and, gte, desc, sql } from 'drizzle-orm'
 import type { NormalizedTransaction } from '../types/index.js'
+import { checkThreatIntelBatch } from '../services/threat-intel.js'
+import { getLearnedRules, recordPatternHit } from '../services/pattern-learner.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,6 +70,15 @@ export interface SecurityCheckResult {
   socialEngineeringMatches: string[]
   calldataRisk: string[]
   approvalRisks: { spender: string; token: string; isUnlimited: boolean }[]
+
+  // Layer 0: Shared Threat Intelligence
+  threatIntelMatch: boolean
+  threatIntelReason?: string
+  threatIntelSeverity?: string
+  threatIntelReportCount?: number
+
+  // Monitor cross-reference
+  recipientAgentScore?: number | null  // security score of recipient if they're a known agent
 
   // Summary
   overallRiskLevel: InjectionRisk
@@ -987,6 +998,30 @@ export async function runSecurityChecks(
   tx: NormalizedTransaction,
   dailyLimitUsdc?: number,
 ): Promise<SecurityCheckResult> {
+  // ── Layer 0: Shared Threat Intelligence (fastest check — in-memory cache) ──
+  // If this address/URL/token was flagged by ANY agent before, block immediately.
+  const threatValues: { value: string; type: string }[] = [
+    { value: tx.toAddress, type: 'address' },
+  ]
+  if (tx.tokenAddress) threatValues.push({ value: tx.tokenAddress, type: 'token' })
+  if (tx.contractAddress) threatValues.push({ value: tx.contractAddress, type: 'token' })
+  const resourceUrlForThreat = tx.metadata.purpose?.match(/https?:\/\/[^\s]+/)?.[0]
+  if (resourceUrlForThreat) threatValues.push({ value: resourceUrlForThreat, type: 'url' })
+
+  const threatMatch = await checkThreatIntelBatch(threatValues)
+
+  // ── Monitor score lookup: is the recipient a known low-score agent? ───────
+  let recipientAgentScore: number | null = null
+  try {
+    const scoreRow = await db.execute(
+      sql`SELECT security_score FROM erc8004_agents WHERE wallet = ${tx.toAddress.toLowerCase()} OR owner = ${tx.toAddress.toLowerCase()} LIMIT 1`
+    )
+    const row = (scoreRow as any[])[0]
+    if (row?.security_score != null) {
+      recipientAgentScore = Number(row.security_score)
+    }
+  } catch {}
+
   // Determine whether LLM check is warranted to control cost/latency.
   // Trigger when: rules find a signal, OR metadata text is lengthy, OR new merchant.
   const metadataTextLength = [tx.metadata.purpose, tx.metadata.notes, tx.metadata.merchant]
@@ -994,6 +1029,18 @@ export async function runSecurityChecks(
     .join(' ').length
 
   const rulesResult = detectPromptInjection(tx.metadata, tx.toAddress)
+
+  // Run learned patterns (auto-generated from LLM analysis of past attacks)
+  const learnedRules = await getLearnedRules()
+  const textForLearned = [tx.metadata.purpose, tx.metadata.notes, tx.metadata.merchant].filter(Boolean).join(' ')
+  for (const rule of learnedRules) {
+    if (rule.pattern.test(textForLearned)) {
+      rulesResult.score += rule.weight
+      rulesResult.signals.push(rule.label)
+      recordPatternHit(rule.label).catch(() => {})
+    }
+  }
+
   const needsLLMCheck = rulesResult.score >= 10 || metadataTextLength > 100 || !!tx.metadata.isNewMerchant
 
   // Extract resource URL from metadata for phishing check
@@ -1104,7 +1151,13 @@ export async function runSecurityChecks(
     socialEngineeringMatches: patternResult.socialEngineering,
     calldataRisk: calldataResult.calldataRisk,
     approvalRisks: calldataResult.approvalRisks,
-    overallRiskLevel: scoreToRisk(maxScore),
+    // Layer 0: Shared Threat Intelligence
+    threatIntelMatch: threatMatch.matched,
+    threatIntelReason: threatMatch.reason || undefined,
+    threatIntelSeverity: threatMatch.severity || undefined,
+    threatIntelReportCount: threatMatch.reportCount || undefined,
+    recipientAgentScore,
+    overallRiskLevel: scoreToRisk(threatMatch.matched ? 100 : maxScore),
   }
 }
 
@@ -1117,6 +1170,17 @@ export function applySecurityOverride(
   security: SecurityCheckResult,
   currentDecision: string,
 ): SecurityOverride | null {
+  // ── Layer 0: Shared Threat Intelligence (highest priority) ────────────────
+
+  if (security.threatIntelMatch) {
+    return {
+      shouldOverride: true,
+      newDecision: 'deny',
+      reason: security.threatIntelReason ?? 'Blocked by shared threat intelligence',
+      ruleTriggered: 'threat_intel_match',
+    }
+  }
+
   // ── Hard denies (regardless of current decision) ──────────────────────────
 
   if (security.addressRisk === 'malicious') {
@@ -1190,6 +1254,16 @@ export function applySecurityOverride(
   // ── Escalations (only upgrade allow → ask_user) ───────────────────────────
 
   if (currentDecision !== 'allow') return null
+
+  // Recipient is a known low-score agent → escalate
+  if (security.recipientAgentScore != null && security.recipientAgentScore < 30) {
+    return {
+      shouldOverride: true,
+      newDecision: 'ask_user',
+      reason: `Recipient is a known agent with low security score (${security.recipientAgentScore}/100) — manual review recommended`,
+      ruleTriggered: 'recipient_low_score',
+    }
+  }
 
   if (security.injectionRisk === 'medium') {
     return {

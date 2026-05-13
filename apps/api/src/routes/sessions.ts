@@ -231,20 +231,7 @@ export async function sessionRoutes(app: FastifyInstance) {
       return reply.status(410).send({ error: 'Session has expired' })
     }
 
-    // Check budget
-    const spent = Number(session.spentSoFar)
-    const max = Number(session.maxAmountUsdc)
-    if (spent + amountUsdc > max) {
-      return reply.status(403).send({
-        error: 'Budget exceeded',
-        remaining: max - spent,
-        requested: amountUsdc,
-      })
-    }
-
     // Recipient address allowlist — the unforgeable binding.
-    // If set, the destination address MUST be in the list. Names are ignored
-    // because agents could spoof them; addresses cannot be spoofed.
     if (session.allowedRecipients && session.allowedRecipients.length > 0) {
       if (!session.allowedRecipients.includes(to)) {
         return reply.status(403).send({
@@ -254,13 +241,27 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
     }
 
-    // Update spent
-    const newSpent = spent + amountUsdc
-    const newStatus = newSpent >= max ? 'exhausted' : 'active'
-    await db.update(spendingSessions).set({
-      spentSoFar: newSpent.toString(),
-      status: newStatus as any,
-    }).where(eq(spendingSessions.id, session.id))
+    // Atomic budget check + deduct (prevents race condition)
+    // Uses UPDATE ... WHERE to atomically verify budget and deduct in one query
+    const updateResult = await db.execute(
+      rawSql`UPDATE spending_sessions
+        SET spent_so_far = CAST(spent_so_far AS NUMERIC) + ${amountUsdc},
+            status = CASE
+              WHEN CAST(spent_so_far AS NUMERIC) + ${amountUsdc} >= CAST(max_amount_usdc AS NUMERIC) THEN 'exhausted'
+              ELSE status
+            END
+        WHERE id = ${session.id}
+          AND status = 'active'
+          AND CAST(spent_so_far AS NUMERIC) + ${amountUsdc} <= CAST(max_amount_usdc AS NUMERIC)
+        RETURNING spent_so_far, status`
+    )
+    const updated = (updateResult as any[])[0]
+    if (!updated) {
+      // Atomic check failed — either budget exceeded or status changed
+      const current = await db.query.spendingSessions.findFirst({ where: eq(spendingSessions.id, session.id) })
+      const remaining = current ? Number(current.maxAmountUsdc) - Number(current.spentSoFar) : 0
+      return reply.status(403).send({ error: 'Budget exceeded', remaining, requested: amountUsdc })
+    }
 
     // Record spend
     await db.insert(sessionSpends).values({
@@ -274,12 +275,12 @@ export async function sessionRoutes(app: FastifyInstance) {
       purpose,
     })
 
-    // Also update agent's daily/monthly budget
+    // Also update agent's daily/monthly budget (parameterized)
     await db.execute(
-      `UPDATE agents SET
-        daily_spent_usdc = COALESCE(daily_spent_usdc, 0) + ${amountUsdc},
-        monthly_spent_usdc = COALESCE(monthly_spent_usdc, 0) + ${amountUsdc}
-      WHERE id = '${session.agentId}'`
+      rawSql`UPDATE agents SET
+        daily_spent_usdc = COALESCE(CAST(daily_spent_usdc AS NUMERIC), 0) + ${amountUsdc},
+        monthly_spent_usdc = COALESCE(CAST(monthly_spent_usdc AS NUMERIC), 0) + ${amountUsdc}
+      WHERE id = ${session.agentId}`
     )
 
     // Sync spend to chain (fire-and-forget)

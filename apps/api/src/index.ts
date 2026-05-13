@@ -18,6 +18,8 @@ import { startAutoAnalyzer, getAutoAnalyzerStats, enrichMissingWallets } from '.
 import { startCapabilityIndexer } from './services/capability-indexer.js'
 // import { runMarketplaceScan, getMarketplaceStats } from './services/marketplace-scanner.js'
 import { startTelegramBot } from './services/telegram-bot.js'
+import { authRoutes } from './routes/auth.js'
+import { registerAuthHook } from './lib/api-key.js'
 
 const app = Fastify({
   logger: {
@@ -38,8 +40,15 @@ await app.register(cors, {
 })
 
 await app.register(rateLimit, {
-  max: 100,
+  max: 200,
   timeWindow: '1 minute',
+  // Per-API-key rate limiting: each key gets its own counter
+  keyGenerator: (request) => {
+    const apiKey = request.headers['x-api-key'] as string | undefined
+    const sessionKey = request.headers['x-session-key'] as string | undefined
+    // Use API key or session key as rate limit key; fall back to IP
+    return apiKey ?? sessionKey ?? request.ip
+  },
 })
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -47,6 +56,11 @@ await app.register(rateLimit, {
 app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
 
 app.get('/v1/auto-analyzer/status', async () => getAutoAnalyzerStats())
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+await app.register(authRoutes)
+await registerAuthHook(app)
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +91,13 @@ try {
 
   // Start auto-analyzer background task
   startAutoAnalyzer()
+
+  // Start pattern learner — analyzes deny history and generates new detection rules
+  // Runs once on startup, then every 6 hours
+  import('./services/pattern-learner.js').then(({ learnNewPatterns }) => {
+    learnNewPatterns().catch(() => {})
+    setInterval(() => learnNewPatterns().catch(() => {}), 6 * 60 * 60 * 1000)
+  }).catch(() => {})
 
   // Enrich missing wallets on startup
   enrichMissingWallets(20).catch(() => {})

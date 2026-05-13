@@ -327,6 +327,67 @@ export async function authorizeRoutes(app: FastifyInstance) {
         })
       }
 
+      // 10c. Feed shared threat intelligence on security denies
+      if (finalDecision.decision === 'deny' && securityOverride?.shouldOverride) {
+        const { reportThreat } = await import('../services/threat-intel.js')
+        const rule = securityOverride.ruleTriggered
+
+        // Report the address if it was flagged by address/phishing/token checks
+        if (['address_blacklisted', 'phishing_detected', 'token_honeypot', 'threat_intel_match'].includes(rule)) {
+          reportThreat({
+            threatType: 'address',
+            threatValue: normalized.toAddress,
+            chain: chain,
+            reason: finalDecision.reason,
+            ruleTriggered: rule,
+            severity: 'high',
+            sourceAgentId: agentId,
+            sourceRequestId: requestId,
+          }).catch(() => {})
+        }
+
+        // Report phishing URL if detected
+        if (rule === 'phishing_detected' && security.phishingUrl) {
+          reportThreat({
+            threatType: 'url',
+            threatValue: security.phishingUrl,
+            reason: finalDecision.reason,
+            ruleTriggered: rule,
+            severity: 'critical',
+            sourceAgentId: agentId,
+            sourceRequestId: requestId,
+          }).catch(() => {})
+        }
+
+        // Report token if honeypot
+        if (rule === 'token_honeypot' && (normalized.tokenAddress || normalized.contractAddress)) {
+          reportThreat({
+            threatType: 'token',
+            threatValue: normalized.tokenAddress || normalized.contractAddress!,
+            chain: chain,
+            reason: finalDecision.reason,
+            ruleTriggered: rule,
+            severity: 'critical',
+            sourceAgentId: agentId,
+            sourceRequestId: requestId,
+          }).catch(() => {})
+        }
+
+        // Report injection pattern hash for high-confidence injections
+        if (rule === 'prompt_injection_high') {
+          const patternHash = security.injectionSignals.sort().join('|')
+          reportThreat({
+            threatType: 'injection_pattern',
+            threatValue: patternHash,
+            reason: `Injection pattern: ${security.injectionSignals.join(', ')}`,
+            ruleTriggered: rule,
+            severity: 'high',
+            sourceAgentId: agentId,
+            sourceRequestId: requestId,
+          }).catch(() => {})
+        }
+      }
+
       // 11. If allow, record merchant + update budget
       if (finalDecision.decision === 'allow') {
         if (!knownMerchant) {
@@ -375,6 +436,9 @@ export async function authorizeRoutes(app: FastifyInstance) {
             socialEngineeringMatches: security.socialEngineeringMatches,
             calldataRisk: security.calldataRisk,
             anomalyRiskLevel: security.anomalyRiskLevel,
+            threatIntelMatch: security.threatIntelMatch ?? false,
+            threatIntelReason: security.threatIntelReason ?? null,
+            recipientAgentScore: security.recipientAgentScore ?? null,
             overallRiskLevel: security.overallRiskLevel,
           },
         }
@@ -398,6 +462,9 @@ export async function authorizeRoutes(app: FastifyInstance) {
           calldataRisk: security.calldataRisk,
           anomalyRiskLevel: security.anomalyRiskLevel,
           overallRiskLevel: security.overallRiskLevel,
+          threatIntelMatch: security.threatIntelMatch ?? false,
+          threatIntelReason: security.threatIntelReason ?? null,
+          recipientAgentScore: security.recipientAgentScore ?? null,
         },
       }
       return reply.status(200).send(response)
@@ -632,13 +699,28 @@ function scheduleTimeout(
 }
 
 async function deliverWebhook(agentId: string, requestId: string, decision: string) {
+  const { createHmac } = await import('crypto')
   const agent = await db.query.agents.findFirst({ where: eq(agents.id, agentId) })
   if (!agent?.webhookUrl) return
 
+  const payload = JSON.stringify({
+    requestId, decision, agentId, timestamp: new Date().toISOString(),
+  })
+
+  // Sign webhook with HMAC-SHA256 using a secret derived from the owner's API key hash
+  // Agent can verify by computing HMAC of the body with the same secret
+  const owner = await db.query.owners.findFirst({ where: eq(owners.id, agent.ownerId) })
+  const secret = owner?.apiKey ?? 'intercept-webhook'  // apiKey is already hashed
+  const signature = createHmac('sha256', secret).update(payload).digest('hex')
+
   await fetch(agent.webhookUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requestId, decision, agentId, timestamp: new Date().toISOString() }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Intercept-Signature': signature,
+      'X-Intercept-Timestamp': new Date().toISOString(),
+    },
+    body: payload,
   })
 
   await db

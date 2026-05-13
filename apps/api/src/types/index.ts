@@ -107,6 +107,9 @@ export interface AuthorizeResponse {
     calldataRisk: string[]
     anomalyRiskLevel: string
     overallRiskLevel: string
+    threatIntelMatch: boolean
+    threatIntelReason: string | null
+    recipientAgentScore: number | null
   }
 }
 
