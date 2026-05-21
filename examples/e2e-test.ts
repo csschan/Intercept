@@ -16,6 +16,7 @@
  */
 
 const API = process.env.INTERCEPT_URL ?? 'http://localhost:8081'
+// e2e-test creates its own owner/agent — no hardcoded keys needed
 
 let ownerApiKey = ''
 let ownerId = ''

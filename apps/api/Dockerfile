@@ -1,21 +1,21 @@
-FROM node:20-alpine AS builder
+FROM node:20-slim
 
 WORKDIR /app
-COPY package.json tsconfig.json ./
+
+# Copy package files and local packages
+COPY package.json package-lock.json ./
+COPY _solana ./_solana
+
+# Install all dependencies (need tsx for runtime)
+RUN npm ci
+
+# Copy source and config
 COPY src ./src
-
-RUN npm install --production=false
-RUN npx tsc
-
-FROM node:20-alpine
-
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-COPY package.json ./
+COPY drizzle ./drizzle
+COPY tsconfig.json ./
 
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["node", "dist/index.js"]
+CMD ["npx", "tsx", "src/index.ts"]

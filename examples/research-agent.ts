@@ -26,8 +26,13 @@ const client = new Anthropic()
 // ── Intercept Config ────────────────────────────────────────────────────────
 
 const INTERCEPT_URL = process.env.INTERCEPT_URL ?? 'http://localhost:8081'
-const INTERCEPT_API_KEY = process.env.INTERCEPT_API_KEY ?? 'ag_demo_Fu-gl86lXj40yeMT9YrfAAoIXwl8PzYG'
-const AGENT_ID = process.env.INTERCEPT_AGENT_ID ?? '03c7f8ae-efaf-47ba-8048-1000c76029c7'
+const INTERCEPT_API_KEY = process.env.INTERCEPT_API_KEY ?? ''
+const AGENT_ID = process.env.INTERCEPT_AGENT_ID ?? ''
+
+if (!INTERCEPT_API_KEY || !AGENT_ID) {
+  console.error('Set INTERCEPT_API_KEY and INTERCEPT_AGENT_ID environment variables')
+  process.exit(1)
+}
 
 // ── Intercept client ────────────────────────────────────────────────────────
 

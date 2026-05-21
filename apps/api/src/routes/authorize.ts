@@ -452,6 +452,10 @@ export async function authorizeRoutes(app: FastifyInstance) {
         ruleTriggered: finalDecision.ruleTriggered,
         securityChecks: {
           injectionRisk: security.injectionRisk,
+          injectionScore: security.injectionScore,
+          injectionSignals: security.injectionSignals,
+          llmAnalyzed: security.llmAnalyzed,
+          llmIntentFlags: security.llmIntentFlags,
           addressRisk: security.addressRisk,
           contractRisk: security.contractRisk,
           tokenRisk: security.tokenRisk,

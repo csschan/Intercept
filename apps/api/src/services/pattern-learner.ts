@@ -18,32 +18,79 @@
 import { db } from '../db/index.js'
 import { sql } from 'drizzle-orm'
 
-// ── LLM client (uses Claude proxy) ──────────────────────────────────────────
+// ── LLM client (multi-provider fallback) ────────────────────────────────────
 
-const PROXY_URL = process.env.CLAUDE_PROXY_URL ?? 'http://localhost:3456/v1'
-const PROXY_KEY = process.env.CLAUDE_PROXY_KEY ?? 'proxy'
+interface LLMEndpoint {
+  name: string
+  url: string
+  key: string
+  model: string
+}
 
-async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
-  const res = await fetch(`${PROXY_URL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${PROXY_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4',
-      max_tokens: 2000,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }),
-    signal: AbortSignal.timeout(120000),
+function getLLMEndpoints(): LLMEndpoint[] {
+  const endpoints: LLMEndpoint[] = []
+
+  // Claude proxy (local or remote)
+  endpoints.push({
+    name: 'claude-proxy',
+    url: process.env.CLAUDE_PROXY_URL ?? 'http://localhost:3456/v1',
+    key: process.env.CLAUDE_PROXY_KEY ?? 'proxy',
+    model: process.env.CLAUDE_PROXY_MODEL ?? 'claude-haiku-4',
   })
 
-  if (!res.ok) throw new Error(`LLM proxy error: ${res.status}`)
-  const data = await res.json() as any
-  return data.choices?.[0]?.message?.content ?? ''
+  // Groq (Llama 70B — free)
+  if (process.env.GROQ_API_KEY) {
+    endpoints.push({
+      name: 'groq',
+      url: 'https://api.groq.com/openai/v1',
+      key: process.env.GROQ_API_KEY,
+      model: 'llama-3.3-70b-versatile',
+    })
+  }
+
+  return endpoints
+}
+
+async function callLLM(systemPrompt: string, userPrompt: string): Promise<string> {
+  const endpoints = getLLMEndpoints()
+
+  for (const ep of endpoints) {
+    try {
+      const res = await fetch(`${ep.url}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ep.key}`,
+        },
+        body: JSON.stringify({
+          model: ep.model,
+          max_tokens: 2000,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+        signal: AbortSignal.timeout(120000),
+      })
+
+      if (!res.ok) {
+        console.error(`[pattern-learner] ${ep.name} returned ${res.status}, trying next...`)
+        continue
+      }
+
+      const data = await res.json() as any
+      const content = data.choices?.[0]?.message?.content ?? ''
+      if (content) {
+        console.log(`[pattern-learner] LLM response from ${ep.name}`)
+        return content
+      }
+    } catch (err) {
+      console.error(`[pattern-learner] ${ep.name} failed:`, (err as Error).message?.slice(0, 80))
+      continue
+    }
+  }
+
+  throw new Error('All LLM providers failed')
 }
 
 // ── Existing hardcoded patterns (to avoid duplicates) ───────────────────────

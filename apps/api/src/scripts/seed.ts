@@ -25,7 +25,7 @@ const MERCHANT_ADDRESSES: Record<string, string> = {
 
 const FIXED_OWNER_ID = '8a29fa32-08c3-43f7-b624-6e4047970eb0'
 const FIXED_AGENT_ID = '03c7f8ae-efaf-47ba-8048-1000c76029c7'
-const FIXED_API_KEY = 'ag_demo_Fu-gl86lXj40yeMT9YrfAAoIXwl8PzYG'
+const FIXED_API_KEY = process.env.DEMO_API_KEY ?? `ag_demo_${Date.now()}`
 const DEMO_EMAIL = 'demo@agentguard.io'
 
 async function seed() {
